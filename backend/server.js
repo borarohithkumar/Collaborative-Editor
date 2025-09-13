@@ -22,8 +22,6 @@ app.use(cors());
 app.use(express.json());
 console.log('🔗 Trying to connect to:', process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/collaborative-editor');
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/collaborative-editor', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
   serverSelectionTimeoutMS: 5000, // fail fast instead of hanging
 })
 .then(() => {
