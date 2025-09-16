@@ -1,5 +1,4 @@
 import CollaborativeEditor from './components/CollaborativeEditor.jsx';
-import './App.css';
 
 function App() {
   return (
