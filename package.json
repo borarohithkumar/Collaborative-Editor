@@ -10,15 +10,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "dotenv": "^17.2.1",
-    "express": "^5.1.0",
     "lucide-react": "^0.535.0",
-    "mongodb": "^6.18.0",
-    "mongoose": "^8.17.0",
-    "nodemon": "^3.1.10",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
     "tailwind": "^4.0.0"
   },
