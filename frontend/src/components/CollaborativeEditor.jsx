@@ -80,6 +80,14 @@ export default function CollaborativeEditor() {
   const socketRef = useRef(null);
 
   useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [darkMode]); // This runs every time 'darkMode' changes
+
+  useEffect(() => {
     const u = new URL(window.location);
     u.searchParams.set('doc', docId);
     window.history.replaceState({}, '', u);
@@ -214,7 +222,7 @@ export default function CollaborativeEditor() {
   };
 
   return (
-    <div className={`${darkMode ? 'dark' : ''}`}>
+    // <div className={`${darkMode ? 'dark' : ''}`}>
       <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white dark:from-gray-900 dark:to-gray-800 text-gray-900 dark:text-gray-100 font-sans">
 
         {/* Top bar */}
@@ -274,9 +282,22 @@ export default function CollaborativeEditor() {
             <textarea
               value={content}
               onChange={handleContentChange}
-              className="w-full min-h-[60vh] resize-none rounded-xl p-6 text-base leading-relaxed bg-gradient-to-b from-white to-white/90 dark:from-gray-900 to-gray-900/90 outline-none border border-transparent focus:border-indigo-300 transition shadow-inner"
+              className="w-full min-h-[60vh] resize-none rounded-xl p-6 text-base leading-relaxed bg-gradient-to-b from-white to-white/90 dark:from-gray-900 dark:to-gray-900/90 outline-none border border-transparent focus:border-indigo-300 transition shadow-inner
+              /* --- For Firefox --- */
+              [scrollbar-width:thin]
+              [scrollbar-color:#9ca3af_transparent]
+              dark:[scrollbar-color:#4b5563_transparent]
+
+              /* --- For Chrome, Safari, and Opera --- */
+              [&::-webkit-scrollbar]:w-2
+              [&::-webkit-scrollbar-track]:bg-transparent
+              [&::-webkit-scrollbar-thumb]:rounded-full
+              [&::-webkit-scrollbar-thumb]:bg-gray-400
+              dark:[&::-webkit-scrollbar-thumb]:bg-gray-600
+              [&::-webkit-scrollbar-thumb:hover]:bg-gray-500
+              dark:[&::-webkit-scrollbar-thumb:hover]:bg-gray-500"
               placeholder="Write your ideas — they are saved automatically."
-              />
+            />
 
             <div className="mt-4 flex items-center justify-between text-sm text-gray-500">
               <div>Characters: <strong className="text-gray-700 dark:text-gray-200">{stats.chars}</strong></div>
@@ -352,6 +373,6 @@ export default function CollaborativeEditor() {
         <Toast message={toast} onClose={() => setToast(null)} />
 
       </div>
-    </div>
+    // </div>
   );
 }

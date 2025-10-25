@@ -14,7 +14,10 @@ export function useDocument() {
       setLoading(true);
       setError(null);
       
-      const response = await fetch(`/api/documents/url/${slug}`);
+      // const response = await fetch(`/api/documents/url/${slug}`);
+      
+      // FIX 1: Use the correct API path '/slug/'
+      const response = await fetch(`/api/documents/slug/${slug}`);
       
       if (!response.ok) {
         throw new Error(response.status === 404 
@@ -22,8 +25,11 @@ export function useDocument() {
           : 'Failed to fetch document');
       }
       
-      const data = await response.json();
-      setDocumentId(data.documentId);
+      const data = await response.json(); // 'data' is the full document
+      // setDocumentId(data.documentId);
+
+      // FIX 2: Get the ID from the document's '_id' field
+      setDocumentId(data._id);
     } catch (err) {
       console.error("Failed to get document ID:", err);
       setError(err.message);

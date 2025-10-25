@@ -66,30 +66,43 @@ io.on('connection', (socket) => {
       socket.join(documentId);
       console.log(`User ${user.userId} joined document ${documentId}`);
 
-      // Find or create document
-      let doc = await Document.findOne({ 
-        $or: [
-          { _id: documentId },
-          { slug: documentId }
-        ]
-      }).maxTimeMS(5000);
+      // Find or create document (old query)
+      // let doc = await Document.findOne({ 
+      //   $or: [
+      //     { _id: documentId },
+      //     { slug: documentId }
+      //   ]
+      // }).maxTimeMS(5000);
+
+      // New, simpler, and faster query
+      let doc = await Document.findById(documentId).maxTimeMS(5000);
       
       if (!doc) {
         // Create new document with either ObjectId or custom ID
-        const docData = {
-          content: '',
-          version: 0,
-          collaborators: [user]
-        };
+        // const docData = {
+        //   content: '',
+        //   version: 0,
+        //   collaborators: [user]
+        // };
 
-        if (mongoose.Types.ObjectId.isValid(documentId)) {
-          docData._id = documentId;
-          docData.slug = documentId;
-        } else {
-          docData.slug = documentId;
-        }
+        // if (mongoose.Types.ObjectId.isValid(documentId)) {
+        //   docData._id = documentId;
+        //   docData.slug = documentId;
+        // } else {
+        //   docData.slug = documentId;
+        // }
 
-        doc = await Document.create(docData);
+        // doc = await Document.create(docData);
+        
+        
+        // New, simpler create logic
+        // The frontend always provides the ID, so we just use it.
+        doc = await Document.create({
+        _id: documentId, // Use the ID from the frontend
+        content: '',
+        version: 0,
+        collaborators: [user] //add the 1st user
+      });      
       } else {
         // Add user to collaborators if not already present
         const userIndex = doc.collaborators.findIndex(c => c.userId === user.userId);
@@ -97,6 +110,13 @@ io.on('connection', (socket) => {
           doc.collaborators.push(user);
           await doc.save();
         }
+
+        // Document already exists, use your new model method!
+        // await doc.addCollaborator(user.userId, user.name, user.color);
+  
+        // Re-fetch the doc to get the latest collaborators list
+        // (or just push to the 'doc.collaborators' array in memory)
+        doc = await Document.findById(documentId);
       }
 
       // Initialize session
@@ -129,8 +149,7 @@ io.on('connection', (socket) => {
       });
     }
   });
-
-  socket.on('text-operation', async (documentId, operation) => {
+  socket.on('text-operation', (documentId, operation) => {
     try {
       if (!documentSessions.has(documentId)) return;
 
@@ -148,35 +167,55 @@ io.on('connection', (socket) => {
       });
 
       // Save to database (debounced)
-      await Document.findByIdAndUpdate(
-        documentId,
-        { 
-          content: session.content,
-          version: session.version,
-          $addToSet: { collaborators: session.users.get(socket.id) } 
-        }
-      );
+      // await Document.findByIdAndUpdate(
+      //   documentId,
+      //   { 
+      //     content: session.content,
+      //     version: session.version,
+      //     $addToSet: { collaborators: session.users.get(socket.id) } 
+      //   }
+      // );
 
     } catch (err) {
-      console.error('Text operation error:', err);
+      console.error('In-memory text operation error:', err);
     }
   });
-
-  socket.on('document-save', async ({ docId, content }) => {
+  // Add the 'ack' callback as the second argument
+  socket.on('document-save', async ({ docId, content }, ack) => {
     try {
+      const session = documentSessions.get(docId);
+
+      let versionToSave = 1; // Default version
+      if (session) {
+        // If a session is active, use its version
+        session.content = content; // Ensure session content is up-to-date
+        versionToSave = session.version;
+      }
+
+      // Save the content and the latest version
       await Document.findByIdAndUpdate(
         docId,
         { 
           content: content,
+          version: versionToSave, // Save the latest version
           $set: { updatedAt: new Date() }
         }
       );
-      console.log(`Document ${docId} saved successfully`);
+    
+     console.log(`Document ${docId} (v${versionToSave}) saved successfully`);
+    
+      // Acknowledge the save so the client's 'isSaving' state updates
+      if (ack) {
+        ack({ status: 'saved' });
+      }
+
     } catch (err) {
       console.error('Save error:', err);
+      if (ack) {
+       ack({ status: 'error', message: err.message });
+      }
     }
   });
-
   socket.on('update-title', async ({ docId, title }) => {
     try {
       await Document.findByIdAndUpdate(
