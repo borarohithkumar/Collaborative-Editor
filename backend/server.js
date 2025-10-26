@@ -149,6 +149,12 @@ io.on('connection', (socket) => {
       });
     }
   });
+
+  socket.on('user-typing', (documentId, username) => {
+    // Broadcast to everyone else in the room
+    socket.to(documentId).emit('user-started-typing', username);
+  });
+
   socket.on('text-operation', (documentId, operation) => {
     try {
       if (!documentSessions.has(documentId)) return;

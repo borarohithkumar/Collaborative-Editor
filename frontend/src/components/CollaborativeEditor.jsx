@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { FileText, Save, Download, Upload, Wifi, WifiOff, Copy, Moon, Sun } from 'lucide-react';
+import { FileText, Save, Download, Upload, Wifi, WifiOff, Copy, Moon, Sun, FilePlus, User } from 'lucide-react';
 import { io } from 'socket.io-client';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -47,6 +47,71 @@ const Toast = ({ message, onClose, type = 'info' }) => (
   </AnimatePresence>
 );
 
+// ... (after your Toast component) ...
+
+const NameModal = ({ isOpen, onSave }) => {
+  const [localName, setLocalName] = useState('');
+
+  const handleSave = () => {
+    if (localName.trim()) {
+      onSave(localName.trim());
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      handleSave();
+    }
+  };
+
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+        >
+          {/* Backdrop */}
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+          
+          {/* Modal Card */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.9 }}
+            className="relative w-full max-w-sm rounded-2xl bg-white dark:bg-gray-800 p-6 shadow-xl"
+          >
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Welcome!</h3>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">What should we call you?</p>
+            
+            <div className="relative mt-4">
+              <input
+                type="text"
+                value={localName}
+                onChange={(e) => setLocalName(e.target.value)}
+                onKeyDown={handleKeyDown}
+                className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 p-3 pl-10 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                placeholder="Enter your name..."
+                autoFocus
+              />
+              <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+            </div>
+
+            <button
+              onClick={handleSave}
+              className="mt-4 w-full rounded-lg bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2 dark:focus:ring-offset-gray-800"
+            >
+              Save and Join
+            </button>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+};
+
 const useDebouncedCallback = (cb, delay) => {
   const timeoutRef = useRef(null);
   return useCallback((...args) => {
@@ -66,18 +131,32 @@ export default function CollaborativeEditor() {
   const [content, setContent] = useState('');
   const [docId] = useState(getDocumentIdFromUrl());
   const [title, setTitle] = useState('Untitled Document');
-  const [currentUser] = useState(() => ({
-    userId: 'user_' + Math.random().toString(36).substring(2, 9),
-    name: 'User ' + Math.floor(Math.random() * 1000),
-    color: `linear-gradient(135deg, hsl(${Math.floor(Math.random()*360)} 70% 50%), hsl(${Math.floor(Math.random()*360)} 60% 45%))`
-  }));
   const [collaborators, setCollaborators] = useState([]);
   const [isConnected, setIsConnected] = useState(false);
   const [toast, setToast] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
+  const [isNameModalOpen, setIsNameModalOpen] = useState(false);
+  const [typingUser, setTypingUser] = useState(null);
+  const [username, setUsername] = useState('Anonymous');
+
+  // This is no longer a simple state. It now DEPENDS on the username state.
+  const [currentUser, setCurrentUser] = useState(() => ({
+    userId: 'user_' + Math.random().toString(36).substring(2, 9),
+    name: 'Anonymous', // Default name
+    color: `linear-gradient(135deg, hsl(${Math.floor(Math.random()*360)} 70% 50%), hsl(${Math.floor(Math.random()*360)} 60% 45%))`
+  }));
+
+  // This new useEffect updates currentUser whenever the username changes
+  useEffect(() => {
+    setCurrentUser(prevUser => ({
+      ...prevUser,
+      name: username
+    }));
+  }, [username]);
 
   const socketRef = useRef(null);
+  const typingTimeoutRef = useRef(null);
 
   useEffect(() => {
     if (darkMode) {
@@ -87,12 +166,32 @@ export default function CollaborativeEditor() {
     }
   }, [darkMode]); // This runs every time 'darkMode' changes
 
+  // Check for username on load
+  // Effect to get username on load
+  useEffect(() => {
+    const savedName = localStorage.getItem('collaborator_username');
+    if (savedName) {
+      setUsername(savedName);
+    } else {
+      // No name found, so open the modal
+      setIsNameModalOpen(true);
+    }
+  }, []); // Empty array means this runs only once on mount
+
+  // This function will be called by the modal when the user clicks save
+  const handleSaveName = (newName) => {
+    localStorage.setItem('collaborator_username', newName);
+    setUsername(newName);
+    setIsNameModalOpen(false); // Close the modal
+  };
+
   useEffect(() => {
     const u = new URL(window.location);
     u.searchParams.set('doc', docId);
     window.history.replaceState({}, '', u);
   }, [docId]);
 
+  // Effect to connect to socket (runs ONCE)
   useEffect(() => {
     // connect socket
     const url = import.meta.env.VITE_SOCKET_SERVER_URL || 'http://localhost:5000';
@@ -106,7 +205,8 @@ export default function CollaborativeEditor() {
     sock.on('connect', () => {
       setIsConnected(true);
       setToast('Connected to collaboration server');
-      sock.emit('join-document', { documentId: docId, user: currentUser });
+      // We no longer join the room here      
+      // sock.emit('join-document', { documentId: docId, user: currentUser });
     });
 
     sock.on('disconnect', () => {
@@ -137,10 +237,38 @@ export default function CollaborativeEditor() {
       setToast(e.message || 'Unexpected socket error');
     });
 
+    sock.on('user-started-typing', (name) => {
+      // Don't show if we are the one typing
+      if (name === username) return; 
+
+      setTypingUser(name);
+
+      // Clear any existing timeout
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+
+      // Set a new timeout to clear the message
+      typingTimeoutRef.current = setTimeout(() => {
+        setTypingUser(null);
+      }, 3000); // Clear after 3 seconds
+    });
+
     return () => {
       sock.disconnect();
     };
-  }, [docId, currentUser]);
+  // }, [docId, currentUser]);
+  }, []); // <-- EMPTY ARRAY. This now runs only once.
+  
+  // This new effect handles JOINING the room
+  useEffect(() => {
+    // Don't try to join if we're not connected yet or the socket isn't ready
+    if (!isConnected || !socketRef.current) return;
+
+    // Now we can safely join (or re-join if user/doc changes)
+    socketRef.current.emit('join-document', { documentId: docId, user: currentUser });
+
+  }, [isConnected, docId, currentUser]); // <-- Runs when we connect OR when user/doc changes
 
   // debounced autosave
   const saveToServer = useCallback((payload) => {
@@ -157,10 +285,26 @@ export default function CollaborativeEditor() {
     setToast('Auto-saved');
   }, 900);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const emitTyping = useCallback(
+    useDebouncedCallback(() => {
+      if (socketRef.current && socketRef.current.connected) {
+        socketRef.current.emit('user-typing', docId, username);
+      }
+    }, 500), // Emits 500ms after user stops typing
+    [docId, username] // Dependencies for the callback
+  );
+
+  const handleNewDocument = () => {
+    // This clears the '?doc=...' param and reloads
+    window.location.href = window.location.origin;
+  };
+
   const handleContentChange = (e) => {
     const text = e.target.value;
     setContent(text);
     debouncedSave({ docId, content: text });
+    emitTyping();
     if (socketRef.current && socketRef.current.connected) {
       socketRef.current.emit('text-operation', docId, text);
     }
@@ -223,13 +367,12 @@ export default function CollaborativeEditor() {
 
   return (
     // <div className={`${darkMode ? 'dark' : ''}`}>
-      <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white dark:from-gray-900 dark:to-gray-800 text-gray-900 dark:text-gray-100 font-sans">
-
-        {/* Top bar */}
+      // <div className="min-h-screen bg-linear-to-b from-gray-50 to-white dark:from-gray-900 dark:to-gray-800 text-gray-900 dark:text-gray-100 font-sans">
+      <div className="min-h-screen bg-gray-100 dark:bg-gray-950 text-gray-900 dark:text-gray-100 font-sans">        {/* Top bar */}
         <header className="fixed top-4 left-1/2 -translate-x-1/2 w-[92%] max-w-6xl z-40">
           <div className="backdrop-blur-md bg-white/60 dark:bg-gray-900/60 rounded-2xl shadow-xl border border-white/50 dark:border-gray-700/40 px-4 py-3 flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-xl bg-gradient-to-tr from-indigo-400 to-violet-500 shadow-md">
+              <div className="p-2 rounded-xl bg-linear-to-tr from-indigo-400 to-violet-500 shadow-md">
                 <FileText className="w-5 h-5 text-white" />
               </div>
               <input value={title} onChange={handleTitleChange} className="bg-transparent outline-none text-lg font-semibold w-64 md:w-96" />
@@ -247,11 +390,20 @@ export default function CollaborativeEditor() {
               </div>
 
               <div className="flex items-center gap-2">
-                <button onClick={() => setDarkMode(d => !d)} className="p-2 rounded-full hover:scale-105 transition">
-                  {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+
+                <button 
+                  onClick={handleNewDocument} 
+                  title="New Document" 
+                  className="p-2.5 rounded-full text-gray-600 dark:text-gray-300 transition-all bg-white/50 dark:bg-gray-800/60 border border-gray-900/10 dark:border-gray-100/10 hover:bg-white dark:hover:bg-gray-800 hover:scale-105"                >
+                  <FilePlus className="w-4.5 h-4.5" />
                 </button>
 
-                <button onClick={handleCopyLink} className="px-3 py-1 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 text-white text-sm shadow-sm hover:scale-105 transition inline-flex items-center gap-2">
+                <button onClick={() => setDarkMode(d => !d)} 
+                  className="p-2 rounded-full text-gray-600 dark:text-gray-300 transition-all bg-white/50 dark:bg-gray-800/60 border border-gray-900/10 dark:border-gray-100/10 hover:bg-white dark:hover:bg-gray-800 hover:scale-105">
+                  {darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+                </button>
+
+                <button onClick={handleCopyLink} className="px-3 py-1 rounded-full bg-linear-to-r from-indigo-500 to-purple-500 text-white text-sm shadow-sm hover:scale-105 transition inline-flex items-center gap-2">
                   <Copy className="w-4 h-4" /> Share
                 </button>
               </div>
@@ -263,7 +415,10 @@ export default function CollaborativeEditor() {
         <main className="max-w-6xl mx-auto pt-28 pb-12 px-4 grid grid-cols-1 lg:grid-cols-12 gap-6">
 
           {/* Editor area */}
-          <section className="lg:col-span-8 bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-white/60 dark:border-gray-800/40 p-6">
+          <section 
+            // className="lg:col-span-8 bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-white/60 dark:border-gray-800/40 p-6">
+            // className="lg:col-span-8 bg-white/80 dark:bg-gray-900/80 backdrop-blur-md rounded-2xl shadow-2xl border border-white/60 dark:border-gray-800/40 p-6">
+            className="lg:col-span-8 bg-white dark:bg-gray-900 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700/50 p-6">            
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">
                 <div className="text-sm text-gray-500 dark:text-gray-400">Editing</div>
@@ -282,20 +437,8 @@ export default function CollaborativeEditor() {
             <textarea
               value={content}
               onChange={handleContentChange}
-              className="w-full min-h-[60vh] resize-none rounded-xl p-6 text-base leading-relaxed bg-gradient-to-b from-white to-white/90 dark:from-gray-900 dark:to-gray-900/90 outline-none border border-transparent focus:border-indigo-300 transition shadow-inner
-              /* --- For Firefox --- */
-              [scrollbar-width:thin]
-              [scrollbar-color:#9ca3af_transparent]
-              dark:[scrollbar-color:#4b5563_transparent]
-
-              /* --- For Chrome, Safari, and Opera --- */
-              [&::-webkit-scrollbar]:w-2
-              [&::-webkit-scrollbar-track]:bg-transparent
-              [&::-webkit-scrollbar-thumb]:rounded-full
-              [&::-webkit-scrollbar-thumb]:bg-gray-400
-              dark:[&::-webkit-scrollbar-thumb]:bg-gray-600
-              [&::-webkit-scrollbar-thumb:hover]:bg-gray-500
-              dark:[&::-webkit-scrollbar-thumb:hover]:bg-gray-500"
+              // className="w-full min-h-[60vh] resize-none rounded-xl p-6 text-base leading-relaxed bg-linear-to-b from-white to-white/90 dark:from-gray-900 dark:to-gray-900/90 outline-none border border-transparent focus:border-indigo-300 transition shadow-inner [scrollbar-width:thin] [scrollbar-color:#9ca3af_transparent] dark:[scrollbar-color:#4b5563_transparent] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-400 dark:[&::-webkit-scrollbar-thumb]:bg-gray-600 [&::-webkit-scrollbar-thumb:hover]:bg-gray-500 dark:[&::-webkit-scrollbar-thumb:hover]:bg-gray-500"
+              className="w-full min-h-[60vh] resize-none rounded-xl p-6 text-base leading-relaxed bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800/50 outline-none focus:ring-1 focus:ring-indigo-400 transition shadow-inner placeholder:text-gray-400 dark:placeholder:text-gray-500 [scrollbar-width:thin] [scrollbar-color:#9ca3af_transparent] dark:[scrollbar-color:#4b5563_transparent] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-400 dark:[&::-webkit-scrollbar-thumb]:bg-gray-600 [&::-webkit-scrollbar-thumb:hover]:bg-gray-500 dark:[&::-webkit-scrollbar-thumb:hover]:bg-gray-500"
               placeholder="Write your ideas — they are saved automatically."
             />
 
@@ -307,23 +450,27 @@ export default function CollaborativeEditor() {
 
           {/* Right sidebar */}
           <aside className="lg:col-span-4 space-y-6">
-            <div className="bg-white dark:bg-gray-900 rounded-2xl p-4 shadow-lg border border-white/40 dark:border-gray-800/30">
-              <h4 className="font-semibold mb-3">Actions</h4>
+            <div 
+              // className="bg-white dark:bg-gray-900 rounded-2xl p-4 shadow-lg border border-white/40 dark:border-gray-800/30">
+              // className="bg-white/80 dark:bg-gray-900/80 backdrop-blur-md rounded-2xl p-4 shadow-lg border border-white/40 dark:border-gray-800/30">
+              className="bg-white dark:bg-gray-900 rounded-2xl p-4 shadow-xl border border-gray-200 dark:border-gray-700/50">              <h4 className="font-semibold mb-3">Actions</h4>
               <div className="flex flex-col gap-3">
                 <div className="grid grid-cols-3 gap-2">
-                  <button onClick={handleManualSave} className="col-span-1 py-2 rounded-xl bg-gradient-to-tr from-indigo-500 to-violet-500 text-white flex items-center justify-center gap-2 shadow"> <Save className="w-4 h-4" /> Save </button>
+                  <button onClick={handleManualSave} className="col-span-1 py-2 rounded-xl bg-linear-to-tr from-indigo-500 to-violet-500 text-white flex items-center justify-center gap-2 shadow"> <Save className="w-4 h-4" /> Save </button>
                   <label className="col-span-1 py-2 rounded-xl bg-emerald-500 text-white flex items-center justify-center gap-2 cursor-pointer shadow"><Download className="w-4 h-4" /> <input type="file" accept=".txt,.md" onChange={handleImport} className="hidden" /> Import</label>
                   <button onClick={handleExport} className="col-span-1 py-2 rounded-xl bg-purple-900 text-white flex items-center justify-center gap-2 shadow"> <Upload className="w-4 h-4" /> Export </button>
                 </div>
               </div>
             </div>
 
-            <div className="bg-white dark:bg-gray-900 rounded-2xl p-4 shadow-lg border border-white/40 dark:border-gray-800/30">
-              <h4 className="font-semibold mb-3">Collaborators</h4>
+            <div 
+              // className="bg-white dark:bg-gray-900 rounded-2xl p-4 shadow-lg border border-white/40 dark:border-gray-800/30">
+              // className="bg-white/80 dark:bg-gray-900/80 backdrop-blur-md rounded-2xl p-4 shadow-lg border border-white/40 dark:border-gray-800/30">
+              className="bg-white dark:bg-gray-900 rounded-2xl p-4 shadow-xl border border-gray-200 dark:border-gray-700/50">              <h4 className="font-semibold mb-3">Collaborators</h4>
               <div className="flex items-center gap-3 mb-3">
                 <Avatar user={currentUser} isYou />
                 <div>
-                  <div className="text-sm font-medium">{currentUser.name} <span className="text-xs text-gray-400">(You)</span></div>
+                  <div className="text-sm font-medium">{username} <span className="text-xs text-gray-400">(You)</span></div>
                   <div className="text-xs text-gray-400">Active now</div>
                 </div>
               </div>
@@ -343,9 +490,27 @@ export default function CollaborativeEditor() {
               </div>
             </div>
 
-            <div className="bg-white dark:bg-gray-900 rounded-2xl p-4 shadow-lg border border-white/40 dark:border-gray-800/30">
-              <h4 className="font-semibold mb-3">Activity</h4>
-              <div className="text-xs text-gray-400">Recent edits and presence will appear here.</div>
+            <div 
+              // className="bg-white dark:bg-gray-900 rounded-2xl p-4 shadow-lg border border-white/40 dark:border-gray-800/30">
+              // className="bg-white/80 dark:bg-gray-900/80 backdrop-blur-md rounded-2xl p-4 shadow-lg border border-white/40 dark:border-gray-800/30">
+              className="bg-white dark:bg-gray-900 rounded-2xl p-4 shadow-xl border border-gray-200 dark:border-gray-700/50">              <h4 className="font-semibold mb-3">Activity</h4>
+              
+              <AnimatePresence>
+                {typingUser && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="text-sm italic text-gray-500 dark:text-gray-400 mb-2"
+                  >
+                    {typingUser} is typing...
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {collaborators.length === 0 && !typingUser && (
+                <div className="text-xs text-gray-400">Recent edits and presence will appear here.</div>
+              )}
               <div className="mt-3 space-y-2 text-sm">
                 {collaborators.slice(0,5).map(c => (
                   <div key={c.userId} className="flex items-center gap-2">
@@ -371,6 +536,7 @@ export default function CollaborativeEditor() {
         </div>
 
         <Toast message={toast} onClose={() => setToast(null)} />
+        <NameModal isOpen={isNameModalOpen} onSave={handleSaveName} />
 
       </div>
     // </div>
