@@ -375,8 +375,11 @@ export default function CollaborativeEditor() {
               <div className="p-2 rounded-xl bg-linear-to-tr from-indigo-400 to-violet-500 shadow-md">
                 <FileText className="w-5 h-5 text-white" />
               </div>
-              <input value={title} onChange={handleTitleChange} className="bg-transparent outline-none text-lg font-semibold w-64 md:w-96" />
-              {smallBadge(<span className="text-xs">ID: {docId}</span>)}
+              {/* <input value={title} onChange={handleTitleChange} className="bg-transparent outline-none text-lg font-semibold w-64 md:w-96" /> */}
+              <input value={title} onChange={handleTitleChange} className="bg-transparent outline-none text-lg font-semibold flex-1 min-w-0" />
+              <div className="hidden sm:block">
+                {smallBadge(<span className="text-xs">ID: {docId}</span>)}
+              </div>
             </div>
 
             <div className="flex items-center gap-3">
