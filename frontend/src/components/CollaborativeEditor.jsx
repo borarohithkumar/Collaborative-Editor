@@ -371,12 +371,11 @@ export default function CollaborativeEditor() {
       <div className="min-h-screen bg-gray-100 dark:bg-gray-950 text-gray-900 dark:text-gray-100 font-sans">        {/* Top bar */}
         <header className="fixed top-4 left-1/2 -translate-x-1/2 w-[92%] max-w-6xl z-40">
           <div className="backdrop-blur-md bg-white/60 dark:bg-gray-900/60 rounded-2xl shadow-xl border border-white/50 dark:border-gray-700/40 px-4 py-3 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-1 min-w-0">
               <div className="p-2 rounded-xl bg-linear-to-tr from-indigo-400 to-violet-500 shadow-md">
                 <FileText className="w-5 h-5 text-white" />
               </div>
-              {/* <input value={title} onChange={handleTitleChange} className="bg-transparent outline-none text-lg font-semibold w-64 md:w-96" /> */}
-              <input value={title} onChange={handleTitleChange} className="bg-transparent outline-none text-lg font-semibold flex-1 min-w-0" />
+              <input value={title} onChange={handleTitleChange} className="bg-transparent outline-none text-lg font-semibold w-full"/>
               <div className="hidden sm:block">
                 {smallBadge(<span className="text-xs">ID: {docId}</span>)}
               </div>
