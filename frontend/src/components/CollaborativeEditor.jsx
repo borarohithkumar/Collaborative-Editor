@@ -1928,7 +1928,7 @@ const debouncedEmitTitleUpdate = useDebouncedCallback((newTitle) => {
                 {activityLog.map((activity) => (
                   <div
                     key={activity._id}
-                    className="flex items-center gap-2 my-1"
+                    className="flex items-center gap-2 my-1 first:mt-0"
                   >
                     <div>
                       {activity.user ? (
@@ -1939,8 +1939,8 @@ const debouncedEmitTitleUpdate = useDebouncedCallback((newTitle) => {
                         />
                       ) : (
                         // Fallback icon for system messages
-                        <div className="px-[3px] flex items-center justify-center text-gray-500 dark:text-gray-300 transition-all">
-                          <FileText className="w-[23px] h-[22px]" />
+                        <div className="px-px flex items-center justify-center text-gray-500 dark:text-gray-300 transition-all">
+                          <FileText className="w-[24.5px] h-[24.5px]" />
                         </div>
                       )}
                     </div>
