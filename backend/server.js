@@ -19,7 +19,10 @@ const server = http.createServer(app);
  */
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:5173", // Allow requests from our React app
+    origin: [
+      "http://localhost:5173",      // For PC debugging, allow rqsts from react app
+      // process.env.FRONTEND_URL      // For phone debugging
+    ],
     methods: ["GET", "POST"],
     credentials: true,
   },
@@ -110,6 +113,7 @@ const logAndBroadcastActivity = async (docId, user, message) => {
         name: user.name,
         color: user.color,
       },
+      createdAt: new Date(),
     };
 
     // 2. Atomically push the new activity to the DB
@@ -415,13 +419,17 @@ io.on("connection", (socket) => {
       socket.join(docId);
       console.log(`User ${user.userId} joined protected doc ${docId}`);
 
-      // 2. Atomically update collaborators ($pull then $push)
+      // 2. Update collaborators (Must be separate steps to avoid MongoDB path conflict)
+
+      // A: Atomically $pull any old instance of this user
+      await Document.findByIdAndUpdate(docId, {
+        $pull: { collaborators: { userId: user.userId } },
+      }).maxTimeMS(5000);
+
+      // B: Atomically $push the new user object
       const updatedDoc = await Document.findByIdAndUpdate(
         docId,
-        {
-          $pull: { collaborators: { userId: user.userId } },
-          $push: { collaborators: user },
-        },
+        { $push: { collaborators: user } },
         { new: true } // Return the final document
       ).maxTimeMS(5000);
 
