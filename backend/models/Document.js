@@ -82,6 +82,22 @@ const documentSchema = new mongoose.Schema(
      * This embeds the activitySchema defined above.
      */
     activity: [activitySchema],
+    /**
+     * Store chat history.
+     * We limit this array in server.js so it doesn't grow forever.
+     */
+    chat: [
+      {
+        id: String,
+        text: String,
+        user: {
+          userId: String,
+          name: String,
+          color: String,
+        },
+        timestamp: { type: Date, default: Date.now },
+      },
+    ],
   },
   {
     /**
@@ -99,7 +115,7 @@ const documentSchema = new mongoose.Schema(
  */
 documentSchema.pre("save", async function (next) {
   // 'this' refers to the document being saved
-  
+
   // 1. If the password field wasn't modified, or if it's empty,
   //    skip the hashing logic and move to the next step.
   if (!this.isModified("password") || !this.password) {

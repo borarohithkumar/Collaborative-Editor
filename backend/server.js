@@ -20,7 +20,7 @@ const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
     origin: [
-      "http://localhost:5173",      // For PC debugging, allow rqsts from react app
+      "http://localhost:5173", // For PC debugging, allow rqsts from react app
       // process.env.FRONTEND_URL      // For phone debugging
     ],
     methods: ["GET", "POST"],
@@ -194,6 +194,7 @@ io.on("connection", (socket) => {
           version: 0,
           collaborators: [user],
           activity: [newActivity], // Add "joined" activity on creation
+          chat: [],
         });
         isNewDoc = true;
       }
@@ -204,7 +205,7 @@ io.on("connection", (socket) => {
         socket.emit("password-required", { docId: documentId });
       } else {
         // --- SCENARIO 2: PUBLIC DOCUMENT (OR JUST CREATED) ---
-        
+
         // 4. Join the Socket.io room for this document
         socket.join(documentId);
         console.log(`User ${user.userId} joined document ${documentId}`);
@@ -262,6 +263,8 @@ io.on("connection", (socket) => {
           version: finalDocState.version,
           title: finalDocState.title,
           activityLog: finalDocState.activity,
+          chatHistory: finalDocState.chat,
+          hasPassword: !!finalDocState.password, // Send true if password exists
         });
       }
     } catch (err) {
@@ -391,6 +394,36 @@ io.on("connection", (socket) => {
   });
 
   /**
+   * Handles chat messages.
+   * Broadcasts to everyone in the room (including sender) so timestamps sync easily.
+   */
+  socket.on("send-chat-message", async ({ docId, message, user }) => {
+    const chatMsg = {
+      id: Date.now() + Math.random().toString(36), // Unique ID
+      text: message,
+      user: user,
+      timestamp: new Date(),
+    };
+
+    // 1. Broadcast immediately (for speed)
+    io.to(docId).emit("receive-chat-message", chatMsg);
+
+    // 2. Save to Database (Async)
+    try {
+      await Document.findByIdAndUpdate(docId, {
+        $push: {
+          chat: {
+            $each: [chatMsg],
+            $slice: -50, // Keep only the last 50 messages to save space
+          },
+        },
+      });
+    } catch (err) {
+      console.error("Failed to save chat message:", err);
+    }
+  });
+
+  /**
    * Handles password submission for a protected document.
    */
   socket.on("submit-password", async ({ docId, password, user }) => {
@@ -414,7 +447,7 @@ io.on("connection", (socket) => {
 
       // --- PASSWORD IS CORRECT ---
       // The rest of this logic mirrors the public "join-document" flow.
-      
+
       // 1. Join the Socket.io room
       socket.join(docId);
       console.log(`User ${user.userId} joined protected doc ${docId}`);
@@ -458,6 +491,8 @@ io.on("connection", (socket) => {
         version: finalDocState.version,
         title: finalDocState.title,
         activityLog: finalDocState.activity,
+        chatHistory: finalDocState.chat,
+        hasPassword: !!finalDocState.password, // Send true if password exists
       });
     } catch (err) {
       console.error("Submit password error:", err);
@@ -467,29 +502,47 @@ io.on("connection", (socket) => {
 
   /**
    * Handles a request to set or change a document's password.
+   * Now requires the old password if one is already set.
    */
-  socket.on("set-document-password", async ({ docId, password }) => {
-    try {
-      const doc = await Document.findById(docId);
-      if (!doc) {
-        throw new Error("Document not found");
+  socket.on("set-document-password", async ({ docId, password, oldPassword }) => {
+      try {
+        const doc = await Document.findById(docId);
+        if (!doc) {
+          throw new Error("Document not found");
+        }
+
+        // === SECURITY CHECK ===
+        // If a password already exists, we MUST verify the old one.
+        if (doc.password) {
+          if (!oldPassword) {
+            throw new Error("Current password is required to change it.");
+          }
+          // Use the schema's compare method
+          const isMatch = await doc.comparePassword(oldPassword);
+          if (!isMatch) {
+            throw new Error("Incorrect current password.");
+          }
+        }
+
+        // Set the new password
+        doc.password = password;
+        await doc.save(); // Triggers hashing hook
+
+        // Send success message
+        socket.emit("toast", { message: "Password updated successfully!" });
+
+        // Broadcast to EVERYONE (including sender) that this doc is now password-protected
+        // This ensures other users' UI updates to show "Change Password" instead of "Set"
+        io.to(docId).emit("password-status-update", { hasPassword: true });
+      } catch (err) {
+        console.error("Set password error:", err);
+        socket.emit("error", {
+          type: "password-error",
+          message: err.message || "Failed to set password",
+        });
       }
-
-      // Set the password field. The Mongoose 'pre-save' hook in your
-      // model (Document.js) should handle the hashing automatically.
-      doc.password = password;
-      await doc.save(); // This triggers the hashing hook
-
-      // Send a confirmation toast to the user
-      socket.emit("toast", { message: "Password set successfully!" });
-    } catch (err) {
-      console.error("Set password error:", err);
-      socket.emit("error", {
-        type: "password-error",
-        message: "Failed to set password",
-      });
     }
-  });
+  );
 
   /**
    * Handles user disconnection.

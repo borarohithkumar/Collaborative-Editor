@@ -24,6 +24,7 @@ import {
   Redo,
   Palette,
   Highlighter,
+  Send,
 } from "lucide-react";
 import { io } from "socket.io-client";
 import { motion, AnimatePresence } from "framer-motion";
@@ -37,7 +38,15 @@ import { TextStyle } from "@tiptap/extension-text-style";
 import { Highlight } from "@tiptap/extension-highlight";
 import { marked } from "marked"; // Converts markdown string to HTML string
 import TurndownService from "turndown"; // Converts HTML string to markdown string
-import DOMPurify from "dompurify";
+import DOMPurify from "dompurify"; // xss(cross-site scripting) prevention
+import mammoth from "mammoth";
+import { asBlob } from "html-docx-js-typescript";
+import * as pdfjsLib from "pdfjs-dist";
+
+// Set worker for PDF.js (Required for it to work in React)
+// (Unpkg mirrors npm versions instantly):
+pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+// pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 // --- Turndown Setup ---
 // Initialize Turndown to convert HTML back to Markdown for export
@@ -330,7 +339,7 @@ const ExportModal = ({ isOpen, onClose, onConfirm, formats, setFormats }) => {
             </h3>
 
             <div className="mt-4 space-y-3">
-              {["txt", "md", "html"].map((format) => (
+              {["txt", "md", "html", "docx", "pdf"].map((format) => (
                 <label
                   key={format}
                   htmlFor={`format-${format}`}
@@ -343,14 +352,14 @@ const ExportModal = ({ isOpen, onClose, onConfirm, formats, setFormats }) => {
                     onChange={() => toggleFormat(format)}
                     className="h-5 w-5 rounded text-indigo-500 focus:ring-indigo-400 border-gray-300 dark:border-gray-600 dark:bg-gray-900"
                   />
-                  <span className="text-sm font-medium text-gray-700 dark:text-gray-200">
-                    .{format.toUpperCase()}
-                    <span className="text-xs text-gray-500 dark:text-gray-400 ml-1">
-                      {format === "txt"
-                        ? "(Plain Text)"
-                        : format === "md"
-                        ? "(Markdown)"
-                        : "(HTML)"}
+                  <span className="text-sm font-medium text-gray-700 dark:text-gray-200 uppercase">
+                    .{format}
+                    <span className="text-xs text-gray-500 dark:text-gray-400 ml-1 normal-case">
+                      {format === "docx"
+                        ? "(Microsoft Word)"
+                        : format === "pdf"
+                        ? "(Print/PDF)"
+                        : ""}
                     </span>
                   </span>
                 </label>
@@ -473,6 +482,183 @@ const PasswordModal = ({
     )}
   </AnimatePresence>
 );
+
+/**
+ * Modal for setting or changing the document password.
+ * Includes validation for "Confirm Password".
+ */
+const PasswordManagementModal = ({
+  isOpen,
+  onClose,
+  hasPassword,
+  socket,
+  docId,
+  setToast,
+}) => {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Reset state when modal opens/closes
+  useEffect(() => {
+    if (isOpen) {
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setIsLoading(false);
+    }
+  }, [isOpen]);
+
+  const handleSubmit = () => {
+    // 1. Validation
+    if (!newPassword) {
+      setToast("Password cannot be empty", "error");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setToast("New passwords do not match", "error");
+      return;
+    }
+    if (hasPassword && !currentPassword) {
+      setToast("Please enter your current password", "error");
+      return;
+    }
+
+    setIsLoading(true);
+
+    // 2. Emit Event
+    // We assume the socket is passed via props or available in context
+    if (socket && socket.connected) {
+      socket.emit("set-document-password", {
+        docId,
+        password: newPassword,
+        oldPassword: currentPassword,
+      });
+      // We close immediately; the server will send a toast on success/failure
+      onClose();
+    } else {
+      setToast("Connection error", "error");
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+        >
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={onClose}
+          />
+
+          {/* Modal Card */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="relative w-full max-w-sm rounded-2xl bg-white dark:bg-gray-800 p-6 shadow-xl"
+          >
+            {/* Header */}
+            <div className="mb-4">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                {hasPassword ? "Change Password" : "Protect Document"}
+              </h3>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                {hasPassword
+                  ? "Enter your current password to set a new one."
+                  : "Set a password to restrict access to this document."}
+              </p>
+            </div>
+
+            {/* Inputs */}
+            <div className="space-y-3">
+              {/* Current Password (Only if updating) */}
+              {hasPassword && (
+                <div>
+                  <label
+                    htmlFor="current_pwd"
+                    className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1"
+                  >
+                    Current Password
+                  </label>
+                  <input
+                    id="current_pwd"
+                    type="password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 p-2.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    placeholder="Current password..."
+                  />
+                </div>
+              )}
+
+              {/* New Password */}
+              <div>
+                <label
+                  htmlFor="new_pwd"
+                  className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1"
+                >
+                  {hasPassword ? "New Password" : "Password"}
+                </label>
+                <input
+                  id="new_pwd"
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 p-2.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="Enter new password..."
+                />
+              </div>
+
+              {/* Confirm New Password (NEW FEATURE) */}
+              <div>
+                <label
+                  htmlFor="confirm_pwd"
+                  className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1"
+                >
+                  Confirm Password
+                </label>
+                <input
+                  id="confirm_pwd"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 p-2.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="Type it again..."
+                />
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={onClose}
+                className="cursor-pointer px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSubmit}
+                disabled={isLoading}
+                className="cursor-pointer px-4 py-2 text-sm font-medium text-white bg-indigo-500 hover:bg-indigo-600 rounded-lg shadow-sm transition-colors disabled:opacity-50"
+              >
+                {isLoading ? "Saving..." : "Save Password"}
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+};
 
 /**
  * The Tiptap editor's toolbar.
@@ -734,9 +920,11 @@ export default function CollaborativeEditor() {
   // null = 'lobby', 'public' = in doc, 'private' = needs password
   const [docState, setDocState] = useState(null);
   const [password, setPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
+  const [isManagePasswordOpen, setIsManagePasswordOpen] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   const [lobbyJoinTime, setLobbyJoinTime] = useState(0); // For password spinner
+  const [hasPassword, setHasPassword] = useState(false); // Does doc have a password?
+  const [isFocusMode, setIsFocusMode] = useState(false); // For Focus mode
 
   // Networking and Status
   const [collaborators, setCollaborators] = useState([]);
@@ -751,6 +939,12 @@ export default function CollaborativeEditor() {
   const [isNameModalOpen, setIsNameModalOpen] = useState(false);
   const [stats, setStats] = useState({ chars: 0, words: 0 });
 
+  // --- Chat State ---
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState("");
+  const [activeTab, setActiveTab] = useState("collaborators"); // 'collaborators' or 'chat'
+  const chatScrollRef = useRef(null);
+
   // Modals
   const [confirmModal, setConfirmModal] = useState({
     isOpen: false,
@@ -763,6 +957,8 @@ export default function CollaborativeEditor() {
     txt: true,
     md: false,
     html: false,
+    docx: false,
+    pdf: false,
   });
 
   // Activity Log
@@ -837,32 +1033,42 @@ export default function CollaborativeEditor() {
   const mainRef = useRef(null); // for dynamic setting of ht calculated of aside
   const asideRef = useRef(null); // for dynamic calc of aside's ht to set to main
 
+  // Refs for inputs to prevent re-renders while typing
+  const chatInputRef = useRef(null);
+  const titleInputRef = useRef(null);
+
   // --- Effects ---
 
-// [Effect] Dynamically set main's height to match the aside
+  // [Effect] Dynamically set main's height to match the aside
   useEffect(() => {
     const mainEl = mainRef.current;
     const asideEl = asideRef.current;
 
-    // Only run on large screens (where grid is active)
-    if (mainEl && asideEl && window.innerWidth >= 1024) {
-      
-      // 1. Get the aside's computed height
-      const asideHeight = asideEl.offsetHeight;
+    if (!mainEl) return;
 
-      // 2. Get the main's padding
-      const mainStyles = getComputedStyle(mainEl);
-      const paddingTop = parseFloat(mainStyles.paddingTop);
-      const paddingBottom = parseFloat(mainStyles.paddingBottom);
+    if (isFocusMode) {
+      // === FOCUS MODE ===
+      // Remove the hardcoded height so CSS (min-h-screen) takes over
+      mainEl.style.height = "92vh";
+    } else {
+      // === NORMAL MODE ===
+      // Match height to sidebar only on large screens
+      if (asideEl && window.innerWidth >= 1024) {
+        const asideHeight = asideEl.offsetHeight;
 
-      // 3. Apply the formula
-      // (Aside Height + Main Padding Top + Main Padding Bottom)
-      mainEl.style.height = `${asideHeight + paddingTop + paddingBottom}px`;
+        // Get Main's padding to ensure perfect alignment
+        const mainStyles = getComputedStyle(mainEl);
+        const paddingTop = parseFloat(mainStyles.paddingTop);
+        const paddingBottom = parseFloat(mainStyles.paddingBottom);
+
+        // Apply the matched height
+        mainEl.style.height = `${asideHeight + paddingTop + paddingBottom}px`;
+      } else {
+        // Reset if screen is small (mobile/tablet)
+        mainEl.style.height = "";
+      }
     }
-
-    // We only need this to run once on load,
-    // because your aside height is now constant.
-  }, []); // Empty array means it runs once on mount
+  }, [isFocusMode]); // Re-runs instantly when Focus Mode toggles
 
   // [Effect] Toggle dark mode class on <html> element
   useEffect(() => {
@@ -920,24 +1126,6 @@ export default function CollaborativeEditor() {
     };
   }, []); // Empty dependency array = runs once on mount
 
-  // [Helper] Adds a new item to the top of the activity log
-  // const addActivity = useCallback((message, user = null) => {
-  //   setActivityLog((prevLog) =>
-  //     [
-  //       {
-  //         id: Date.now() + Math.random(),
-  //         message,
-  //         user, // The user object (or null for system)
-  //         timestamp: new Date(),
-  //       },
-  //       ...prevLog,
-  //     ].slice(0, 50)
-  //   ); // Keep only the latest 50 activities
-  // }, []); // No dependencies, function is stable
-
-  // [Effect] Register all socket event listeners
-  // This effect re-runs if its dependencies (like `editor` or `username`) change,
-  // ensuring the listeners always have access to the latest state.
   useEffect(() => {
     if (!socketRef.current || !editor || !isConnected) return;
 
@@ -950,43 +1138,47 @@ export default function CollaborativeEditor() {
       content: serverContent,
       title: serverTitle,
       activityLog: serverActivityLog, // GET THE SAVED LOG
+      chatHistory: serverChatHistory,
+      hasPassword: serverHasPassword, // Receive the flag
     }) => {
-      // addActivity("You joined the document", currentUser);
-
       if (editor && typeof serverContent === "string")
         editor.commands.setContent(serverContent, false);
       if (serverTitle) setTitle(serverTitle);
 
+      if (serverChatHistory && Array.isArray(serverChatHistory)) {
+        setChatMessages(serverChatHistory);
+      }
+
       // Our "constant" hardcoded element
-  const loadMessage = {
-    _id: "client_load_message",
-    user: null, // Makes it a "System" message
-    message: "Document loaded successfully.",
-    createdAt: new Date().toISOString(),
-  };
+      const loadMessage = {
+        _id: "client_load_message",
+        user: null, // Makes it a "System" message
+        message: "Document loaded successfully.",
+        createdAt: new Date().toISOString(),
+      };
 
-  // Check if serverActivityLog is a valid array AND has items
-  if (Array.isArray(serverActivityLog) && serverActivityLog.length > 0) {
-    // --- SCENARIO 1: SUCCESS ---
-    // Server log has items (like "User Joined").
-    // We add our message to it.
-    // Result: ["User Joined", "Document loaded"] (2+ elements)
-    setActivityLog([...serverActivityLog, loadMessage]);
-  } else {
-    // --- SCENARIO 2: EMPTY LOG ([], null, or undefined) ---
-    // The server log is empty. We must create 2 elements.
+      // Check if serverActivityLog is a valid array AND has items
+      if (Array.isArray(serverActivityLog) && serverActivityLog.length > 0) {
+        // --- SCENARIO 1: SUCCESS ---
+        // Server log has items (like "User Joined").
+        // We add our message to it.
+        // Result: ["User Joined", "Document loaded"] (2+ elements)
+        setActivityLog([...serverActivityLog, loadMessage]);
+      } else {
+        // --- SCENARIO 2: EMPTY LOG ([], null, or undefined) ---
+        // The server log is empty. We must create 2 elements.
 
-    // Our "constant" hardcoded element #2
-    const welcomeMessage = {
-       _id: "client_welcome_message",
-       user: null,
-       message: "Welcome to the document!",
-       createdAt: new Date(Date.now() - 1000).toISOString(), // 1 sec older
-    };
+        // Our "constant" hardcoded element #2
+        const welcomeMessage = {
+          _id: "client_welcome_message",
+          user: null,
+          message: "Welcome to the document!",
+          createdAt: new Date(Date.now() - 1000).toISOString(), // 1 sec older
+        };
 
-    // Result: ["Welcome", "Document loaded"] (Exactly 2 elements)
-    setActivityLog([welcomeMessage, loadMessage]);
-  }
+        // Result: ["Welcome", "Document loaded"] (Exactly 2 elements)
+        setActivityLog([welcomeMessage, loadMessage]);
+      }
 
       const duration = Date.now() - lobbyJoinTime;
       const minDisplayTime = 1000; // Min 1 sec for spinner
@@ -1001,6 +1193,12 @@ export default function CollaborativeEditor() {
           setIsJoining(false);
         }, minDisplayTime - duration);
       }
+      setHasPassword(serverHasPassword);
+    };
+
+    // Fired on password update
+    const onPasswordStatusUpdate = ({ hasPassword: status }) => {
+      setHasPassword(status);
     };
 
     // Fired when another user changes the document content
@@ -1014,7 +1212,7 @@ export default function CollaborativeEditor() {
       const newList = updatedList || [];
       // === Filter duplicates from the server ===
       const uniqueUserIds = new Set();
-      const uniqueList = newList.filter(user => {
+      const uniqueList = newList.filter((user) => {
         if (uniqueUserIds.has(user.userId)) {
           return false; // Found a duplicate, skip it
         }
@@ -1101,6 +1299,11 @@ export default function CollaborativeEditor() {
       // addActivity(message, null); // Add to activity log as system message
     };
 
+    // Fired when a chat message is received
+    const onReceiveChatMessage = (msg) => {
+      setChatMessages((prev) => [...prev, msg]);
+    };
+
     // --- Register Listeners ---
     sock.on("document-state", onDocumentState);
     sock.on("remote-operation", onRemoteOperation);
@@ -1110,6 +1313,8 @@ export default function CollaborativeEditor() {
     sock.on("password-required", onPasswordRequired);
     sock.on("title-updated", onTitleUpdated);
     sock.on("new-activity", onNewActivity);
+    sock.on("receive-chat-message", onReceiveChatMessage);
+    sock.on("password-status-update", onPasswordStatusUpdate);
     sock.on("toast", onToast);
 
     // --- Cleanup Function ---
@@ -1123,6 +1328,8 @@ export default function CollaborativeEditor() {
       sock.off("password-required", onPasswordRequired);
       sock.off("title-updated", onTitleUpdated);
       sock.off("new-activity", onNewActivity);
+      sock.off("receive-chat-message", onReceiveChatMessage);
+      sock.off("password-status-update", onPasswordStatusUpdate);
       sock.off("toast", onToast);
     };
   }, [
@@ -1144,8 +1351,9 @@ export default function CollaborativeEditor() {
   useEffect(() => {
     if (!isConnected || !socketRef.current || !docId || !currentUser) return;
 
-    // We are now attempting to join, so clear old activity
+    // We are now attempting to join, so clear old activity & chat
     setActivityLog([]);
+    setChatMessages([]);
     // Record the time we *started* joining (for the spinner logic)
     setLobbyJoinTime(Date.now());
     console.log("Attempting to join document:", docId);
@@ -1165,6 +1373,26 @@ export default function CollaborativeEditor() {
       activityListRef.current.scrollTop = 0; // New items are added to the top
     }
   }, [collaborators, activityLog]); // Runs when collaborators or activity changes
+
+  // [Effect] Auto-scroll chat to bottom when new messages arrive
+  useEffect(() => {
+    if (activeTab === "chat" && chatScrollRef.current) {
+      const scrollEl = chatScrollRef.current.getScrollElement();
+      if (scrollEl) {
+        scrollEl.scrollTop = scrollEl.scrollHeight;
+      }
+    }
+  }, [chatMessages, activeTab]);
+
+  // Sync Title Input when it changes from the server (but don't interrupt typing)
+  useEffect(() => {
+    if (
+      titleInputRef.current &&
+      document.activeElement !== titleInputRef.current
+    ) {
+      titleInputRef.current.value = title;
+    }
+  }, [title]);
 
   // --- Debounced Functions ---
 
@@ -1214,19 +1442,34 @@ export default function CollaborativeEditor() {
 
   // Debounced version of emitting "user-typing" (waits 500ms)
   const emitTyping = useDebouncedCallback(() => {
-      if (socketRef.current && socketRef.current.connected) {
-        socketRef.current.emit("user-typing", docId, username);
-      }
-    }, 500);
+    if (socketRef.current && socketRef.current.connected) {
+      socketRef.current.emit("user-typing", docId, username);
+    }
+  }, 500);
 
-  // Debounced version of emitting "update-title" (waits 700ms)
-const debouncedEmitTitleUpdate = useDebouncedCallback((newTitle) => {
+  // Debounced version of emitting "update-title"
+  // Updates BOTH the server and the local state after a delay
+  const debouncedEmitTitleUpdate = useDebouncedCallback((newTitle) => {
+    // 1. Update local React state (so exports/UI are correct)
+    setTitle(newTitle);
+
+    // 2. Send to server
     if (socketRef.current && socketRef.current.connected) {
       socketRef.current.emit("update-title", { docId, title: newTitle });
     }
-  }, 700); // 700ms delay after last keystroke
+  }, 700);
 
   // --- Event Handlers ---
+
+  // Called when user types in the title input
+  // Only triggers the debounce, does NOT cause re-render
+  const handleTitleChange = (e) => {
+    const val = e.target.value;
+    // Note: We do NOT call setTitle(val) here.
+    // We let the input update natively, then sync state later.
+    // Call the debounced function to emit the change to the server
+    debouncedEmitTitleUpdate(val);
+  };
 
   // Called from the NameModal
   const handleSaveName = (newName) => {
@@ -1281,35 +1524,23 @@ const debouncedEmitTitleUpdate = useDebouncedCallback((newTitle) => {
     window.location.href = window.location.origin;
   };
 
-  // Called when user types in the title input
-  const handleTitleChange = (e) => {
-    // Emit title change to other users
-    // if (socketRef.current && socketRef.current.connected) {
-    //   socketRef.current.emit("update-title", { docId, title: t });
-    // }
-    const newTitle = e.target.value;
-    // 1. Update local state immediately for a responsive UI
-    setTitle(newTitle);
-    // 2. Call the debounced function to emit the change to the server
-    debouncedEmitTitleUpdate(newTitle);
-  };
-
   // Called from "Save" buttons
   const handleManualSave = () => {
     saveToServer({ docId, content: editor.getHTML() }, "Saved");
   };
 
   // Called from ExportModal "Export" button
-  const handleConfirmExport = () => {
-    const { txt, md, html } = exportFormats;
+  const handleConfirmExport = async () => {
+    const { txt, md, html, docx, pdf } = exportFormats; // Added docx, pdf
     const docTitle = title || "document";
     let exported = false;
 
+    // 1. HTML Export
     if (html) {
-      const htmlContent = editor.getHTML();
-      downloadFile(htmlContent, `${docTitle}.html`, "text/html");
+      downloadFile(editor.getHTML(), `${docTitle}.html`, "text/html");
       exported = true;
     }
+    // 2. Markdown Export
     if (md) {
       const markdownContent = turndownService.turndown(editor.getHTML());
       downloadFile(
@@ -1319,15 +1550,52 @@ const debouncedEmitTitleUpdate = useDebouncedCallback((newTitle) => {
       );
       exported = true;
     }
+    // 3. Plain Text Export
     if (txt) {
-      const textContent = editor.getText();
-      downloadFile(textContent, `${docTitle}.txt`, "text/plain;charset=utf-8");
+      downloadFile(
+        editor.getText(),
+        `${docTitle}.txt`,
+        "text/plain;charset=utf-8"
+      );
+      exported = true;
+    }
+    // 4. Word (.docx) Export - NEW!
+    if (docx) {
+      const htmlString = `
+        <!DOCTYPE html>
+        <html>
+          <head><style>body { font-family: Arial; }</style></head>
+          <body>${editor.getHTML()}</body>
+        </html>`;
+
+      // Convert HTML to DOCX Blob
+      const blob = await asBlob(htmlString);
+
+      // Download
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `${docTitle}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      exported = true;
+    }
+    // 5. PDF Export (Native Print) - NEW!
+    if (pdf) {
+      window.print();
       exported = true;
     }
 
     if (exported) setToast("Export complete!");
     setIsExportModalOpen(false);
-    setExportFormats({ txt: true, md: false, html: false }); // Reset
+    // Reset checkboxes
+    setExportFormats({
+      txt: true,
+      md: false,
+      html: false,
+      docx: false,
+      pdf: false,
+    });
   };
 
   // Opens the export modal
@@ -1336,57 +1604,71 @@ const debouncedEmitTitleUpdate = useDebouncedCallback((newTitle) => {
   };
 
   // Called when user selects a file for import
-  const handleImport = (e) => {
+  const handleImport = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const fileName = file.name;
+    const extension = fileName.split(".").pop().toLowerCase();
     const titleWithoutExtension = fileName.replace(/\.[^/.]+$/, "");
-    const reader = new FileReader();
 
-    reader.onload = (ev) => {
-      try {
-        const markdownText = ev.target.result;
-        // XSS Mitigation: Convert Markdown to HTML, then sanitize the HTML
-        const unsafeHtmlContent = marked(markdownText); // Convert MD to HTML
-        const safeHtmlContent = DOMPurify.sanitize(unsafeHtmlContent); // 👈 SANITIZE HERE
+    let contentToInsert = "";
 
-        // 1. Set title from file name
-        setTitle(titleWithoutExtension);
-        if (socketRef.current && socketRef.current.connected) {
-          socketRef.current.emit("update-title", {
-            docId,
-            title: titleWithoutExtension,
-          });
-        }
+    try {
+      setToast("Importing..."); // Show loading state
 
-        // 2. Append content (or set if editor is empty)
-        if (editor.getText().length === 0) {
-          editor.commands.setContent(safeHtmlContent, true);
-        } else {
-          const combinedHtml = editor.getHTML() + "<p></p>" + safeHtmlContent;
-          editor.commands.setContent(combinedHtml, true);
-        }
-
-        // 3. Trigger save/emit
-        debouncedEmitOperation(editor, docId);
-        debouncedSave(editor, docId);
-
-        setToast("File imported");
-        // addActivity(`imported "${fileName}"`, currentUser);
-        if (socketRef.current) {
-          socketRef.current.emit("log-action", {
-            docId,
-            message: `imported "${fileName}"`,
-          });
-        }
-      } catch (err) {
-        console.error("Failed to parse Markdown:", err);
-        setToast("Failed to import: Invalid file");
+      // === 1. Handle WORD (.docx) ===
+      if (extension === "docx") {
+        const arrayBuffer = await file.arrayBuffer();
+        const result = await mammoth.convertToHtml({ arrayBuffer });
+        contentToInsert = result.value; // The generated HTML
       }
-    };
-    reader.readAsText(file);
-    e.target.value = null; // Clear input
+      // === 2. Handle PDF (.pdf) ===
+      else if (extension === "pdf") {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        let fullText = "";
+
+        // Loop through all pages to extract text
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          const pageText = textContent.items.map((item) => item.str).join(" ");
+          fullText += `<p>${pageText}</p><hr/>`; // Add page break
+        }
+        contentToInsert = fullText;
+      }
+      // === 3. Handle Text/Markdown (.txt, .md) ===
+      else {
+        const text = await file.text();
+        // Convert MD to HTML if needed, or just treat as plain text
+        contentToInsert = extension === "md" ? marked(text) : `<p>${text}</p>`;
+      }
+
+      // === Common: Sanitize and Insert ===
+      const safeHtml = DOMPurify.sanitize(contentToInsert);
+
+      // Update Title
+      setTitle(titleWithoutExtension);
+      debouncedEmitTitleUpdate(titleWithoutExtension);
+
+      // Insert Content
+      // Note: Passing 'true' as the second argument triggers the 'onUpdate' event,
+      // which automatically handles saving to server and emitting to socket.
+      if (editor.getText().length === 0) {
+        editor.commands.setContent(safeHtml, true);
+      } else {
+        const combined = editor.getHTML() + "<p></p>" + safeHtml;
+        editor.commands.setContent(combined, true);
+      }
+
+      setToast(`Imported "${fileName}"`);
+    } catch (err) {
+      console.error("Import failed:", err);
+      setToast(`Failed to import ${extension.toUpperCase()} file`);
+    }
+
+    e.target.value = null; // Reset input
   };
 
   // Called from "Share" button
@@ -1412,23 +1694,22 @@ const debouncedEmitTitleUpdate = useDebouncedCallback((newTitle) => {
     setPassword(""); // Clear password from input
   };
 
-  // Called from "Set" password button in sidebar
-  const handleSetPassword = () => {
-    if (!newPassword) {
-      setToast("Password cannot be empty");
-      return;
-    }
-    socketRef.current.emit("set-document-password", {
-      docId,
-      password: newPassword,
-    });
-    setNewPassword(""); // Clear input
-    // addActivity("updated the document password", currentUser);
+  const handleSendChat = () => {
+    // Read value from Ref
+    const message = chatInputRef.current?.value;
+    if (!message?.trim()) return;
+
     if (socketRef.current) {
-      socketRef.current.emit("log-action", {
+      socketRef.current.emit("send-chat-message", {
         docId,
-        message: "updated the document password",
+        message: message.trim(),
+        user: currentUser,
       });
+    }
+
+    // Clear input manually
+    if (chatInputRef.current) {
+      chatInputRef.current.value = "";
     }
   };
 
@@ -1458,13 +1739,13 @@ const debouncedEmitTitleUpdate = useDebouncedCallback((newTitle) => {
               </p>
             ) : (
               // If no docId, show the join/create form
-              <div className="mt-6 text-left">
-                <p
+              <div className="mt-4 text-left">
+                <label
                   htmlFor="lobby_input"
                   className="mt-2 text-sm text-gray-500 dark:text-gray-400"
                 >
                   To join an existing document, enter its ID below.
-                </p>
+                </label>
                 <div className="flex items-center gap-2 mt-2">
                   <input
                     type="text"
@@ -1505,98 +1786,118 @@ const debouncedEmitTitleUpdate = useDebouncedCallback((newTitle) => {
       )}
 
       {/* --- Main Header Bar --- */}
-      <header className="fixed top-4 left-1/2 -translate-x-1/2 w-[92%] max-w-6xl z-40">
-        <div className="backdrop-blur-md bg-white/60 dark:bg-gray-900/60 rounded-2xl shadow-xl border border-white/50 dark:border-gray-700/40 px-4 py-3 flex items-center justify-between gap-4">
-          {/* Left Side: Icon, Title, Doc ID */}
-          <div className="flex items-center gap-3 flex-1 min-w-0">
-            <div className="p-2 rounded-xl bg-linear-to-tr from-indigo-400 to-violet-500 shadow-md">
-              <FileText className="w-5 h-5 text-white" />
-            </div>
-            <input
-              name="title_field"
-              value={title}
-              onChange={handleTitleChange}
-              className="bg-transparent outline-none text-lg font-semibold w-full"
-            />
-            <div className="hidden sm:block">
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(docId);
-                  setToast("Document ID copied!");
-                }}
-                className="cursor-pointer inline-flex items-center gap-2 text-xs bg-white/60 dark:bg-gray-800/60 backdrop-blur-sm px-2 py-1 rounded-full shadow-sm transition-all hover:bg-white/90 dark:hover:bg-gray-700/90"
-                title="Copy Document ID"
-              >
-                <span className="whitespace-nowrap">ID: {docId}</span>
-                <Copy className="w-3 h-3" />
-              </button>
-            </div>
-          </div>
-
-          {/* Right Side: Status, Avatars, Actions */}
-          <div className="flex items-center gap-3">
-            <div className="hidden md:flex items-center gap-3">
-              <ConnectionStatus isConnected={isConnected} />
-              <div className="flex -space-x-2 items-center">
-                {collaborators.slice(0, 5).map((c) => (
-                  <Avatar
-                    key={c.userId}
-                    user={c}
-                    isYou={c.userId === currentUser.userId}
-                    size="small"
-                  />
-                ))}
+      {/* Hide Header in Focus Mode */}
+      <div className={isFocusMode ? "hidden" : "block"}>
+        <header className="fixed top-4 left-1/2 -translate-x-1/2 w-[92%] max-w-6xl z-40">
+          <div className="backdrop-blur-md bg-white/60 dark:bg-gray-900/60 rounded-2xl shadow-xl border border-white/50 dark:border-gray-700/40 px-4 py-3 flex items-center justify-between gap-4">
+            {/* Left Side: Icon, Title, Doc ID */}
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              <div className="p-2 rounded-xl bg-linear-to-tr from-indigo-400 to-violet-500 shadow-md">
+                <FileText className="w-5 h-5 text-white" />
+              </div>
+              <input
+                ref={titleInputRef}
+                name="title_field"
+                defaultValue={title} // Use defaultValue, not value
+                onChange={handleTitleChange} // Call the non-rendering handler
+                className="bg-transparent outline-none text-lg font-semibold w-full"
+              />
+              <div className="hidden sm:block">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(docId);
+                    setToast("Document ID copied!");
+                  }}
+                  className="cursor-pointer inline-flex items-center gap-2 text-xs bg-white/60 dark:bg-gray-800/60 backdrop-blur-sm px-2 py-1 rounded-full shadow-sm transition-all hover:bg-white/90 dark:hover:bg-gray-700/90"
+                  title="Copy Document ID"
+                >
+                  <span className="whitespace-nowrap">ID: {docId}</span>
+                  <Copy className="w-3 h-3" />
+                </button>
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleNewDocument}
-                title="New Document"
-                className="cursor-pointer p-[9px] rounded-full text-gray-600 dark:text-gray-300 transition-all bg-white/50 dark:bg-gray-800/60 border border-gray-900/10 dark:border-gray-100/10 hover:bg-white dark:hover:bg-gray-800 hover:scale-105"
-              >
-                <FilePlus className="w-4.5 h-4.5" />
-              </button>
+            {/* Right Side: Status, Avatars, Actions */}
+            <div className="flex items-center gap-3">
+              <div className="hidden md:flex items-center gap-3">
+                <ConnectionStatus isConnected={isConnected} />
+                <div className="flex -space-x-2 items-center">
+                  {collaborators.slice(0, 5).map((c) => (
+                    <Avatar
+                      key={c.userId}
+                      user={c}
+                      isYou={c.userId === currentUser.userId}
+                      size="small"
+                    />
+                  ))}
+                </div>
+              </div>
 
-              <button
-                onClick={() => setDarkMode((d) => !d)}
-                className={`
-                  cursor-pointer rounded-full text-gray-600 dark:text-gray-300 transition-all 
-                  bg-white/50 dark:bg-gray-800/60 border border-gray-900/10 dark:border-gray-100/10 
-                  hover:bg-white dark:hover:bg-gray-800 hover:scale-105
-                  ${darkMode ? "p-[8.8px]" : "p-[7.6px]"} 
-                `}
-              >
-                {darkMode ? (
-                  <Sun className="w-4.5 h-4.5" />
-                ) : (
-                  <Moon className="w-5 h-5" />
-                )}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleNewDocument}
+                  title="New Document"
+                  className="cursor-pointer p-[9px] rounded-full text-gray-700 dark:text-gray-200 transition-all bg-white dark:bg-gray-800 border border-gray-900/10 dark:border-gray-100/10 shadow-sm active:scale-95 hover:scale-105"
+                >
+                  <FilePlus className="w-4.5 h-4.5" />
+                </button>
 
-              <button
-                onClick={handleCopyLink}
-                className="cursor-pointer px-3 py-1 rounded-full bg-linear-to-r from-indigo-500 to-purple-500 text-white text-sm shadow-sm hover:scale-105 transition inline-flex items-center gap-2"
-              >
-                <Copy className="w-4 h-4" /> Share
-              </button>
+                <button
+                  onClick={() => setDarkMode((d) => !d)}
+                  className={`
+  cursor-pointer rounded-full text-gray-700 dark:text-gray-200 transition-all 
+  bg-white dark:bg-gray-800 border border-gray-900/10 dark:border-gray-100/10 shadow-sm active:scale-95 hover:scale-105
+  ${darkMode ? "p-[8.8px]" : "p-[7.6px]"} 
+`}
+                >
+                  {darkMode ? (
+                    <Sun className="w-4.5 h-4.5" />
+                  ) : (
+                    <Moon className="w-5 h-5" />
+                  )}
+                </button>
+
+                <button
+                  onClick={handleCopyLink}
+                  className="cursor-pointer px-3 py-1 rounded-full bg-linear-to-r from-indigo-500 to-purple-500 text-white text-sm shadow-sm active:scale-95 hover:scale-105 transition-all inline-flex items-center gap-2"
+                >
+                  <Copy className="w-4 h-4" /> Share
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      </header>
+        </header>
+      </div>
 
       {/* --- Main Content Area --- */}
-      <main ref={mainRef} className="max-w-6xl mx-auto max-lg:min-h-screen pt-26 pb-16 px-4 grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <main
+        ref={mainRef}
+        className={`max-w-6xl mx-auto max-lg:min-h-screen ${
+          isFocusMode ? "pt-6 pb-4" : "pt-26 pb-16"
+        } px-4 grid grid-cols-1 lg:grid-cols-12 gap-6`}
+      >
         {/* Editor Card */}
-        <section className="lg:col-span-8 max-lg:h-100 lg:h-full overflow-hidden flex flex-col bg-white dark:bg-gray-900 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700/50 px-6 py-5">
+        {/* Change col-span-8 to col-span-12 if focused */}
+        <section
+          className={`${
+            isFocusMode
+              ? "lg:col-span-12 w-[90%] mx-auto max-lg:h-[90%]"
+              : "lg:col-span-8  max-lg:h-100"
+          } lg:h-full overflow-hidden flex flex-col bg-white dark:bg-gray-900 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700/50 px-6 py-5`}
+        >
           {/* Editor Card Header */}
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
-              <div className="text-sm text-gray-500 dark:text-gray-400">
+              <div className="text-sm text-gray-500 dark:text-gray-400 hidden sm:block">
                 Editing
               </div>
-              <div className="text-sm text-gray-400">•</div>
-              <div className="text-sm text-gray-500">{stats.words} words</div>
+              <div className="text-sm text-gray-400 hidden sm:block">•</div>
+              <div className="text-sm text-gray-500">
+                Words:{" "}
+                <strong className="text-gray-700 dark:text-gray-200">
+                  {stats.words}
+                </strong>
+              </div>
             </div>
             <div className="flex items-center gap-3">
               {/* Save Status Badge */}
@@ -1642,16 +1943,66 @@ const debouncedEmitTitleUpdate = useDebouncedCallback((newTitle) => {
               <button
                 onClick={handleManualSave}
                 title="Save now"
-                className="cursor-pointer p-1.5 rounded-full text-gray-500 hover:text-indigo-600 hover:bg-indigo-100 dark:text-gray-600 dark:hover:text-indigo-200 dark:hover:bg-indigo-900/50 transition-all"
+                className="cursor-pointer p-1.5 rounded-full text-indigo-600 bg-indigo-100 dark:text-indigo-200 dark:bg-indigo-900/50 transition-all hover:scale-110"
               >
                 <Save className="w-4 h-4" />
               </button>
+
               <button
                 onClick={handleClear}
                 title="Clear Document"
-                className="cursor-pointer p-1.5 rounded-full text-gray-500 hover:text-rose-500 hover:bg-rose-500/10 dark:text-gray-600 dark:hover:text-rose-400 dark:hover:bg-rose-500/10 transition-all"
+                className="cursor-pointer p-[6.5px] rounded-full text-rose-500 bg-rose-500/10 dark:text-rose-400 dark:bg-rose-500/10 transition-all hover:scale-110"
               >
-                <Trash2 className="w-4 h-4" />
+                <Trash2 className="w-[18px] h-[17px]" />
+              </button>
+
+              {/* Focus Mode Toggle */}
+              <button
+                onClick={() => setIsFocusMode(!isFocusMode)}
+                title={isFocusMode ? "Exit Focus Mode" : "Enter Focus Mode"}
+                className={`cursor-pointer p-1.5 rounded-full transition-all hover:scale-110 ${
+                  isFocusMode
+                    ? "bg-orange-100 text-orange-600 dark:bg-orange-900/50 dark:text-orange-300"
+                    : "text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
+                }`}
+              >
+                {isFocusMode ? (
+                  // Minimize Icon
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M8 3v3a2 2 0 0 1-2 2H3" />
+                    <path d="M21 8h-3a2 2 0 0 1-2-2V3" />
+                    <path d="M3 16h3a2 2 0 0 1 2 2v3" />
+                    <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
+                  </svg>
+                ) : (
+                  // Maximize Icon
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M15 3h6v6" />
+                    <path d="M9 21H3v-6" />
+                    <path d="M21 3l-7 7" />
+                    <path d="M3 21l7-7" />
+                  </svg>
+                )}
               </button>
             </div>
           </div>
@@ -1677,7 +2028,13 @@ const debouncedEmitTitleUpdate = useDebouncedCallback((newTitle) => {
         </section>
 
         {/* --- Right Sidebar --- */}
-        <aside ref={asideRef} className="lg:col-span-4 space-y-6 lg:h-full">
+        {/* Hide Sidebar in Focus Mode */}
+        <aside
+          ref={asideRef}
+          className={`lg:col-span-4 space-y-6 lg:h-full ${
+            isFocusMode ? "hidden" : "block"
+          }`}
+        >
           {/* Actions Card */}
           <div className="bg-white dark:bg-gray-900 rounded-2xl p-4 shadow-xl border border-gray-200 dark:border-gray-700/50">
             <h4 className="font-semibold mb-3">Actions</h4>
@@ -1693,7 +2050,7 @@ const debouncedEmitTitleUpdate = useDebouncedCallback((newTitle) => {
                   <Download className="w-4 h-4" />
                   <input
                     type="file"
-                    accept=".txt,.md"
+                    accept=".txt,.md,.html,.docx,.pdf"
                     onChange={handleImport}
                     className="hidden"
                     name="import_file"
@@ -1707,87 +2064,265 @@ const debouncedEmitTitleUpdate = useDebouncedCallback((newTitle) => {
                   <Upload className="w-4 h-4" /> Export
                 </button>
               </div>
+              {/* Password Management Trigger */}
               <div className="border-t border-gray-200 dark:border-gray-700/50 pt-3 mt-3">
-                <label
-                  className="text-sm font-medium text-gray-700 dark:text-gray-300"
-                  htmlFor="doc_pw"
+                <div
+                  className={`flex items-center mb-2 ${
+                    hasPassword ? "justify-between" : "justify-center"
+                  }`}
                 >
-                  Set Document Password
-                </label>
-                <div className="flex items-center gap-2 mt-1.5">
-                  <input
-                    id={"doc_pw"}
-                    type="password"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleSetPassword()}
-                    placeholder="Set password..."
-                    className="flex-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 p-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                  />
-                  <button
-                    onClick={handleSetPassword}
-                    className="px-2 py-1.5 rounded-lg bg-indigo-500 text-white shadow-sm hover:bg-indigo-600 cursor-pointer"
+                  <label
+                    htmlFor="security_settings_btn"
+                    className="text-sm font-medium text-gray-700 dark:text-gray-300"
                   >
-                    Set
-                  </button>
+                    Security
+                  </label>
+                  {hasPassword && (
+                    <span className="text-[10px] bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 px-2 py-0.5 rounded-full font-medium border border-emerald-200 dark:border-emerald-800">
+                      Protected
+                    </span>
+                  )}
                 </div>
+
+                <button
+                  id="security_settings_btn"
+                  onClick={() => setIsManagePasswordOpen(true)}
+                  className={`cursor-pointer w-full flex items-center justify-center gap-2 p-2.5 rounded-xl text-sm font-medium transition-all shadow-sm border ${
+                    hasPassword
+                      ? "bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 active:bg-gray-100 dark:active:bg-gray-600"
+                      : "bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-dashed border-gray-300 dark:border-gray-600 hover:text-indigo-500 hover:border-indigo-500 dark:hover:text-indigo-400 dark:hover:border-indigo-400 max-md:border-dotted max-md:text-indigo-500 max-md:border-indigo-500 max-md:dark:text-indigo-400 max-md:dark:border-indigo-400"
+                  }`}
+                >
+                  {hasPassword ? (
+                    // Lock Icon
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                    </svg>
+                  ) : (
+                    // Unlock Icon
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                      <path d="M7 11V7a5 5 0 0 1 9.9-1" />
+                    </svg>
+                  )}
+                  {hasPassword ? "Manage Password" : "Set Password"}
+                </button>
               </div>
             </div>
           </div>
 
           {/* Collaborators Card */}
+          {/* --- Tabbed Sidebar Card --- */}
           <div className="bg-white dark:bg-gray-900 rounded-2xl p-4 shadow-xl border border-gray-200 dark:border-gray-700/50">
-            <h4 className="font-semibold mb-3">Collaborators</h4>
-            <div className="flex items-center gap-3 mb-3 px-1">
-              <Avatar user={currentUser} isYou />
-              <div className="flex-1">
-                <div className="text-sm font-medium">
-                  {username}{" "}
-                  <span className="text-xs text-gray-400">(You)</span>
-                </div>
-                <div className="text-xs text-gray-400">Active now</div>
-              </div>
+            {/* Header / Tabs: Designed to match original <h4> spacing exactly */}
+            <div className="flex items-center gap-4 border-b border-gray-200 dark:border-gray-700/50 pb-2 mb-3">
               <button
-                onClick={() => setIsNameModalOpen(true)}
-                className="cursor-pointer text-sm font-medium text-indigo-500 hover:underline focus:outline-none"
+                onClick={() => setActiveTab("collaborators")}
+                className={`text-sm font-semibold pb-1 transition-colors border-b-2 ${
+                  activeTab === "collaborators"
+                    ? "text-indigo-500 border-indigo-500"
+                    : "text-gray-900 dark:text-gray-100 border-transparent hover:text-gray-700"
+                }`}
               >
-                Edit
+                Collaborators
+              </button>
+              <button
+                onClick={() => setActiveTab("chat")}
+                className={`text-sm font-semibold pb-1 transition-colors border-b-2 ${
+                  activeTab === "chat"
+                    ? "text-indigo-500 border-indigo-500"
+                    : "text-gray-900 dark:text-gray-100 border-transparent hover:text-gray-700"
+                }`}
+              >
+                Chat
               </button>
             </div>
-            <SimpleBar
-              id="collab-scroller"
-              ref={collaboratorListRef}
-              className="h-10 pl-1 pr-2 "
-            >
-              {collaborators.length === 0 && (
-                <div className="text-sm text-gray-400">
-                  No collaborators yet
-                </div>
-              )}
-              {collaborators.map((c) => (
-                <div key={c.userId} className="flex items-center gap-3 pb-[3px] mb-2 last:pb-0 last:mb-0">
-                  <Avatar user={c} />
-                  <div className="flex-1">
-                    <div className="text-sm font-medium">{c.name}</div>
-                    <div className="text-xs text-gray-400">Editing</div>
+
+            {/* --- TAB 1: COLLABORATORS (1:1 Copy of Original) --- */}
+            {activeTab === "collaborators" && (
+              <>
+                {/* 1. The "You" Row */}
+                <div className="flex items-center gap-3 mb-3 px-1">
+                  <Avatar user={currentUser} isYou />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium flex items-center gap-1 overflow-x-auto whitespace-nowrap [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
+                      {username}{" "}
+                      <span className="text-xs text-gray-400 shrink-0">
+                        (You)
+                      </span>
+                    </div>
+                    <div className="text-xs text-gray-400">Active now</div>
                   </div>
-                  <div className="text-xs text-gray-500">{c.userId}</div>
-                </div>
-              ))}
-              {/* "Is Typing" indicator appears here */}
-              <AnimatePresence>
-                {typingUser && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="text-sm italic text-gray-500 dark:text-gray-400 mt-3 pt-3 border-t border-gray-200 dark:border-gray-700/50"
+                  <button
+                    onClick={() => setIsNameModalOpen(true)}
+                    className="cursor-pointer text-sm font-medium text-indigo-500 hover:underline focus:outline-none"
                   >
-                    {typingUser} is typing...
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </SimpleBar>
+                    Edit
+                  </button>
+                </div>
+
+                {/* 2. The List */}
+                <SimpleBar
+                  id="collab-scroller"
+                  ref={collaboratorListRef}
+                  className="h-10 pl-1 pr-2"
+                >
+                  {collaborators.length === 0 && (
+                    <div className="text-sm text-gray-400">
+                      No collaborators yet
+                    </div>
+                  )}
+                  {collaborators.map((c) => (
+                    <div
+                      key={c.userId}
+                      className="flex items-center gap-3 pb-[3px] mb-2 last:pb-0 last:mb-0"
+                    >
+                      <Avatar user={c} />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium overflow-x-auto whitespace-nowrap [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
+                          {c.name}
+                        </div>
+                        <div className="text-xs text-gray-400">Editing</div>
+                      </div>
+                      <div className="text-xs text-gray-500 shrink-0">
+                        {c.userId}
+                      </div>
+                    </div>
+                  ))}
+                  {/* Typing Indicator */}
+                  <AnimatePresence>
+                    {typingUser && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="text-sm italic text-gray-500 dark:text-gray-400 mt-3 pt-3 border-t border-gray-200 dark:border-gray-700/50"
+                      >
+                        {typingUser} is typing...
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </SimpleBar>
+              </>
+            )}
+
+            {/* --- TAB 2: CHAT --- */}
+            {activeTab === "chat" && (
+              <div className="flex flex-col h-[88px]">
+                {/* Messages Area */}
+                <SimpleBar
+                  id="chat-scroller"
+                  ref={chatScrollRef}
+                  className="flex-1 mb-1 min-h-0 pl-0.5 pr-2.5 pt-[0.5px]"
+                >
+                  <div className="flex flex-col space-y-3">
+                    {chatMessages.length === 0 && (
+                      <div className="text-xs text-gray-400 text-center mt-3.5">
+                        No messages yet.
+                      </div>
+                    )}
+
+                    {chatMessages.map((msg) => {
+                      // --- SAFETY CHECK (CRITICAL) ---
+                      // This prevents the "disappearing chat" bug if data is malformed
+                      if (!msg || !msg.user) return null;
+
+                      const isMe = msg.user.userId === currentUser.userId;
+                      return (
+                        <div
+                          key={msg.id}
+                          // 'items-start' keeps avatar at the top
+                          className={`flex items-start gap-2 ${
+                            isMe ? "flex-row-reverse" : "flex-row"
+                          }`}
+                        >
+                          {/* 1. The Avatar (Small) */}
+                          <Avatar user={msg.user} size="small" />
+
+                          {/* 2. The Bubble Container */}
+                          <div
+                            className={`flex flex-col max-w-[calc(70%)] ${
+                              isMe ? "items-end" : "items-start"
+                            }`}
+                          >
+                            {/* The Bubble */}
+                            <div
+                              className={`relative px-2.5 py-1.5 text-xs shadow-sm break-all whitespace-pre-wrap leading-relaxed ${
+                                isMe
+                                  ? "bg-indigo-500 text-white rounded-2xl rounded-tr-none rounded-br-sm"
+                                  : "bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-100 rounded-2xl rounded-tl-none rounded-bl-sm"
+                              }`}
+                            >
+                              {/* Name (Only for others) */}
+                              {!isMe && (
+                                <div className="text-[10px] font-bold text-orange-500 dark:text-orange-400 mb-0.5 leading-none">
+                                  {msg.user.name}
+                                </div>
+                              )}
+                              {msg.text}
+
+                              {/* Timestamp */}
+                              <div
+                                className={`text-[9px] mt-0.5 text-right opacity-80 ${
+                                  isMe ? "text-indigo-100" : "text-gray-400"
+                                }`}
+                              >
+                                {new Date(msg.timestamp).toLocaleTimeString(
+                                  [],
+                                  {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  }
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </SimpleBar>
+
+                {/* Input Area */}
+                <div className="mt-auto flex gap-2 pt-1 border-t border-gray-100 dark:border-gray-800 shrink-0 relative z-10">
+                  <input
+                    ref={chatInputRef} // Attach Ref
+                    name="chat_msg"
+                    type="text"
+                    onKeyDown={(e) => e.key === "Enter" && handleSendChat()}
+                    placeholder="Type..."
+                    className="flex-1 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <button
+                    onClick={handleSendChat}
+                    className="p-1.5 bg-indigo-500 text-white rounded-md hover:bg-indigo-600 transition-colors cursor-pointer"
+                  >
+                    <Send className="w-3 h-3" />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Activity Card */}
@@ -1799,55 +2334,55 @@ const debouncedEmitTitleUpdate = useDebouncedCallback((newTitle) => {
                 Recent activity will appear here.
               </div>
             ) : ( */}
-              <SimpleBar
-                id="activity-scroller"
-                ref={activityListRef}
-                className="space-y-3 text-sm h-20 pr-2 pl-1"
-              >
-                {/* Render each activity log item */}
-                {activityLog.map((activity) => (
-                  <div
-                    key={activity._id}
-                    className="flex items-center gap-2 my-1 first:mt-0"
-                  >
-                    <div>
-                      {activity.user ? (
-                        <Avatar
-                          user={activity.user}
-                          isYou={activity.user.userId === currentUser.userId}
-                          size="small"
-                        />
-                      ) : (
-                        // Fallback icon for system messages
-                        <div className="px-px flex items-center justify-center text-gray-500 dark:text-gray-300 transition-all">
-                          <FileText className="w-[24.5px] h-[24.5px]" />
-                        </div>
+            <SimpleBar
+              id="activity-scroller"
+              ref={activityListRef}
+              className="space-y-3 text-sm h-20 pr-2 pl-1"
+            >
+              {/* Render each activity log item */}
+              {activityLog.map((activity) => (
+                <div
+                  key={activity._id}
+                  className="flex items-center gap-2 my-1 first:mt-0"
+                >
+                  <div>
+                    {activity.user ? (
+                      <Avatar
+                        user={activity.user}
+                        isYou={activity.user.userId === currentUser.userId}
+                        size="small"
+                      />
+                    ) : (
+                      // Fallback icon for system messages
+                      <div className="px-px flex items-center justify-center text-gray-500 dark:text-gray-300 transition-all">
+                        <FileText className="w-[24.5px] h-[24.5px]" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="whitespace-nowrap overflow-x-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
+                      <span className="font-medium text-gray-800 dark:text-gray-200">
+                        {activity.user ? activity.user.name : "System"}
+                      </span>
+                      <span className="text-gray-600 dark:text-gray-400">
+                        {" "}
+                        {activity.message}
+                      </span>
+                    </div>
+                    <div className="text-xs text-gray-400 dark:text-gray-500">
+                      {/* Format timestamp to locale time, e.g., "9:04 AM" */}
+                      {new Date(activity.createdAt).toLocaleTimeString(
+                        navigator.language,
+                        {
+                          hour: "numeric",
+                          minute: "2-digit",
+                        }
                       )}
                     </div>
-                    <div className="flex-1">
-                      <div className="whitespace-nowrap">
-                        <span className="font-medium text-gray-800 dark:text-gray-200">
-                          {activity.user ? activity.user.name : "System"}
-                        </span>
-                        <span className="text-gray-600 dark:text-gray-400">
-                          {" "}
-                          {activity.message}
-                        </span>
-                      </div>
-                      <div className="text-xs text-gray-400 dark:text-gray-500">
-                        {/* Format timestamp to locale time, e.g., "9:04 AM" */}
-                        {new Date(activity.createdAt).toLocaleTimeString(
-                          navigator.language,
-                          {
-                            hour: "numeric",
-                            minute: "2-digit",
-                          }
-                        )}
-                      </div>
-                    </div>
                   </div>
-                ))}
-              </SimpleBar>
+                </div>
+              ))}
+            </SimpleBar>
             {/* )} */}
           </div>
         </aside>
@@ -1870,7 +2405,6 @@ const debouncedEmitTitleUpdate = useDebouncedCallback((newTitle) => {
       </div>
 
       {/* --- Modals (Portal-like) --- */}
-      <Toast message={toast} onClose={() => setToast(null)} />
       <NameModal
         isOpen={isNameModalOpen}
         onSave={handleSaveName}
@@ -1896,6 +2430,16 @@ const debouncedEmitTitleUpdate = useDebouncedCallback((newTitle) => {
         error={toast && toast.includes("Incorrect") ? toast : null}
         isJoining={isJoining}
       />
+      {/* Password Management Modal */}
+      <PasswordManagementModal
+        isOpen={isManagePasswordOpen}
+        onClose={() => setIsManagePasswordOpen(false)}
+        hasPassword={hasPassword}
+        socket={socketRef.current}
+        docId={docId}
+        setToast={(msg, type) => setToast(msg)} // Pass toast handler
+      />
+      <Toast message={toast} onClose={() => setToast(null)} />
     </div>
   );
 }

@@ -20,14 +20,16 @@
 .ProseMirror p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
   float: left;
-  color: #9ca3af; /* Tailwind's gray-400 */
+  color: #9ca3af;
+  /* Tailwind's gray-400 */
   pointer-events: none;
   height: 0;
 }
 
 /* Make the placeholder dark-mode aware */
 .dark .ProseMirror p.is-editor-empty:first-child::before {
-  color: #4b5563; /* Tailwind's gray-600 */
+  color: #4b5563;
+  /* Tailwind's gray-600 */
 }
 
 /* ================================================================
@@ -36,21 +38,27 @@
 
 /* 1. Hide the horizontal scrollbar track for both sidebar cards */
 #activity-scroller .simplebar-horizontal,
-#collab-scroller .simplebar-horizontal {
+#collab-scroller .simplebar-horizontal,
+#chat-scroller .simplebar-horizontal {
   display: none !important;
 }
 
 /* 2. Style the vertical track for both cards */
 #activity-scroller .simplebar-track.simplebar-vertical,
-#collab-scroller .simplebar-track.simplebar-vertical {
-  right: 1px; /* Move track away from the edge */
-  width: 5px; /* Make the track thin */
+#collab-scroller .simplebar-track.simplebar-vertical,
+#chat-scroller .simplebar-track.simplebar-vertical {
+  right: 1px;
+  /* Move track away from the edge */
+  width: 5px;
+  /* Make the track thin */
 }
 
 /* 3. Style the vertical scrollbar thumb (the part you drag) */
 #activity-scroller .simplebar-scrollbar::before,
-#collab-scroller .simplebar-scrollbar::before {
-  background-color: #9ca3af; /* gray-400 */
+#collab-scroller .simplebar-scrollbar::before,
+#chat-scroller .simplebar-scrollbar::before {
+  background-color: #9ca3af;
+  /* gray-400 */
   /* Override simplebar's default insets to fill the whole track */
   left: 0;
   right: 0;
@@ -58,8 +66,10 @@
 
 /* 4. Set the thumb color for dark mode */
 :where(.dark, .dark *) #activity-scroller .simplebar-scrollbar::before,
-:where(.dark, .dark *) #collab-scroller .simplebar-scrollbar::before {
-  background-color: #4b5563; /* gray-600 */
+:where(.dark, .dark *) #collab-scroller .simplebar-scrollbar::before,
+:where(.dark, .dark *) #chat-scroller .simplebar-scrollbar::before {
+  background-color: #4b5563;
+  /* gray-600 */
 }
 
 /* ================================================================
@@ -69,6 +79,7 @@
 ================================================================ */
 
 @layer utilities {
+
   /* --- GLOBAL: Hide scrollbar arrow buttons --- */
   ::-webkit-scrollbar-button {
     display: none !important;
@@ -79,27 +90,36 @@
     Targets browsers that do NOT support the new 'scrollbar-color'
   ================================================================ */
   @supports not (scrollbar-color: auto) {
+
     /* --- Style the main #editor-scroller --- */
     #editor-scroller::-webkit-scrollbar {
       width: 8px;
     }
+
     #editor-scroller::-webkit-scrollbar-track {
       background: transparent;
     }
+
     #editor-scroller::-webkit-scrollbar-thumb {
-      background-color: #9ca3af; /* gray-400 */
+      background-color: #9ca3af;
+      /* gray-400 */
       border-radius: 9999px;
     }
+
     #editor-scroller::-webkit-scrollbar-thumb:hover {
-      background-color: #6b7280; /* gray-500 */
+      background-color: #6b7280;
+      /* gray-500 */
     }
 
     /* --- Dark Mode (WebKit) --- */
     :where(.dark, .dark *) #editor-scroller::-webkit-scrollbar-thumb {
-      background-color: #4b5563; /* gray-600 */
+      background-color: #4b5563;
+      /* gray-600 */
     }
+
     :where(.dark, .dark *) #editor-scroller::-webkit-scrollbar-thumb:hover {
-      background-color: #6b7280; /* gray-500 */
+      background-color: #6b7280;
+      /* gray-500 */
     }
   }
 
@@ -108,15 +128,93 @@
     Targets browsers that DO support the new 'scrollbar-color'
   ================================================================ */
   @supports (scrollbar-color: auto) {
+
     /* --- Style the main #editor-scroller --- */
     #editor-scroller {
       scrollbar-width: thin;
-      scrollbar-color: #9ca3af transparent; /* thumb, track (gray-400) */
+      scrollbar-color: #9ca3af transparent;
+      /* thumb, track (gray-400) */
     }
 
     /* --- Dark Mode (Modern) --- */
     :where(.dark, .dark *) #editor-scroller {
-      scrollbar-color: #4b5563 transparent; /* gray-600 */
+      scrollbar-color: #4b5563 transparent;
+      /* gray-600 */
     }
+  }
+}
+
+/* ================================================================
+   PRINT / PDF EXPORT STYLES
+   This hides the UI when the user selects "Print" or "Export PDF"
+================================================================ */
+@media print {
+
+  /* 1. Hide EVERYTHING by default */
+  body * {
+    visibility: hidden;
+  }
+
+  /* 2. Unhide only the editor content and the title */
+  #editor-scroller,
+  #editor-scroller *,
+  [name="title_field"] {
+    visibility: visible;
+  }
+
+  /* 3. Position the editor at the top-left of the printed page */
+  #editor-scroller {
+    position: absolute;
+    left: 0;
+    top: 60px;
+    /* Leave space for the title */
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: visible !important;
+    /* Allow content to flow across pages */
+    height: auto !important;
+    background: white !important;
+    /* Force white background */
+    color: black !important;
+    /* Force black text */
+  }
+
+  /* 4. Style the Title specifically for the print header */
+  [name="title_field"] {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    text-align: center;
+    font-size: 24pt;
+    font-weight: bold;
+    border: none;
+    background: transparent;
+    color: black !important;
+    /* Force black text */
+  }
+
+  /* 5. Force specific Tiptap elements to be black (overriding dark mode) */
+  #editor-scroller .ProseMirror,
+  #editor-scroller p,
+  #editor-scroller h1,
+  #editor-scroller h2,
+  #editor-scroller ul,
+  #editor-scroller ol,
+  #editor-scroller li {
+    color: black !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  /* 6. General Page Overrides */
+  body {
+    background: white !important;
+    color: black !important;
+  }
+
+  ::-webkit-scrollbar {
+    display: none;
   }
 }
