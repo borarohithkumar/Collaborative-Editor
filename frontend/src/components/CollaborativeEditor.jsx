@@ -663,8 +663,10 @@ const PasswordManagementModal = ({
 /**
  * The Tiptap editor's toolbar.
  */
-const EditorToolbar = ({ editor }) => {
+const EditorToolbar = ({ editor, setToast }) => {
   const [, setVersion] = useState(0);
+  // state to track the "active" (lit up) status of the copy button
+  const [isCopyActive, setIsCopyActive] = useState(false);
 
   // This effect forces the toolbar to re-render when the editor's
   // selection or marks change, ensuring buttons appear "active" correctly.
@@ -676,6 +678,22 @@ const EditorToolbar = ({ editor }) => {
   }, [editor]);
 
   if (!editor) return null;
+
+  // Handler for the Copy Button
+  const handleCopy = () => {
+    const text = editor.getText();
+    navigator.clipboard.writeText(text).then(() => {
+      // 1. Light up the button
+      setIsCopyActive(true);
+      // 2. Show the global toast
+      setToast("Content copied to clipboard");
+      
+      // 3. Turn off the light after 500ms
+      setTimeout(() => {
+        setIsCopyActive(false);
+      }, 500);
+    });
+  };
 
   // A generic button for the toolbar
   const ToggleButton = ({ icon: Icon, onAction, isActive = false, title }) => (
@@ -772,6 +790,14 @@ const EditorToolbar = ({ editor }) => {
         icon={Redo}
         title="Redo"
         onAction={() => editor.chain().focus().redo().run()}
+      />
+      <div className="w-px h-5 bg-gray-300 dark:bg-gray-700 mx-1" />
+      
+      <ToggleButton
+        icon={Copy}
+        title="Copy All Text"
+        isActive={isCopyActive} // Controls the "lit up" look
+        onAction={handleCopy}
       />
     </div>
   );
@@ -1040,19 +1066,22 @@ export default function CollaborativeEditor() {
   // --- Effects ---
 
   // [Effect] Dynamically set main's height to match the aside
+  // Updates on window resize to prevent layout bugs
   useEffect(() => {
+    const adjustHeight = () => {
     const mainEl = mainRef.current;
     const asideEl = asideRef.current;
 
     if (!mainEl) return;
 
+    // Use requestAnimationFrame for smooth performance during resize
+      requestAnimationFrame(() => {
     if (isFocusMode) {
       // === FOCUS MODE ===
-      // Remove the hardcoded height so CSS (min-h-screen) takes over
       mainEl.style.height = "92vh";
     } else {
       // === NORMAL MODE ===
-      // Match height to sidebar only on large screens
+      // Only sync height with sidebar/aside on Desktop/larger screens (>= 1024px)
       if (asideEl && window.innerWidth >= 1024) {
         const asideHeight = asideEl.offsetHeight;
 
@@ -1064,11 +1093,22 @@ export default function CollaborativeEditor() {
         // Apply the matched height
         mainEl.style.height = `${asideHeight + paddingTop + paddingBottom}px`;
       } else {
-        // Reset if screen is small (mobile/tablet)
+        // Reset inline style so CSS (min-h-screen) takes over if screen is small (mobile/tablet)
         mainEl.style.height = "";
       }
     }
-  }, [isFocusMode]); // Re-runs instantly when Focus Mode toggles
+  });
+};
+
+// 1. Run initially
+    adjustHeight();
+
+    // 2. Add listener for screen resizing
+    window.addEventListener("resize", adjustHeight);
+
+    // 3. Cleanup on unmount
+    return () => window.removeEventListener("resize", adjustHeight);
+ }, [isFocusMode]); // Re-runs instantly when Focus Mode toggles
 
   // [Effect] Toggle dark mode class on <html> element
   useEffect(() => {
@@ -2008,7 +2048,8 @@ export default function CollaborativeEditor() {
           </div>
           {/* Editor Container */}
           <div className="overflow-hidden w-full rounded-xl bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800/50 shadow-inner transition-all focus-within:ring-1 focus-within:ring-indigo-400 flex-1 flex flex-col">
-            <EditorToolbar editor={editor} />
+            {/* Pass the setToast prop here */}
+  <EditorToolbar editor={editor} setToast={setToast} />
             <EditorContent
               id="editor-scroller"
               editor={editor}

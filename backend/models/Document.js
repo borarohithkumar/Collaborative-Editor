@@ -113,22 +113,21 @@ const documentSchema = new mongoose.Schema(
  * This function automatically runs *before* any 'document.save()' operation.
  * We use it to hash the password securely.
  */
-documentSchema.pre("save", async function (next) {
+documentSchema.pre("save", async function () {
   // 'this' refers to the document being saved
 
   // 1. If the password field wasn't modified, or if it's empty,
-  //    skip the hashing logic and move to the next step.
+  //    skip the hashing logic and just return (promise resolves).
   if (!this.isModified("password") || !this.password) {
-    return next();
+    return;
   }
 
   // 2. The password *was* modified, so we must hash it.
   try {
     const salt = await bcrypt.genSalt(10); // Generate a salt (10 rounds)
     this.password = await bcrypt.hash(this.password, salt); // Hash the password
-    next(); // Continue with the save operation
   } catch (err) {
-    next(err); // Pass any errors to Mongoose
+    throw err; // Throwing an error stops the save process & Pass any errors to Mongoose
   }
 });
 
