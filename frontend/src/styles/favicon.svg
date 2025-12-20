@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="codeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#2563eb;stop-opacity:1" /> <stop offset="100%" style="stop-color:#06b6d4;stop-opacity:1" /> </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#000" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+
+  <rect x="32" y="32" width="448" height="448" rx="110" fill="url(#codeGrad)" filter="url(#shadow)" />
+
+  <g transform="translate(106, 156) scale(0.6)" fill="white" stroke="white" stroke-width="10">
+    <path d="M116.6 268.4L28.1 192l88.5-76.4c9.9-8.6 11.1-23.7 2.6-33.6s-23.7-11.1-33.6-2.6l-112 96.6c-7.9 6.8-7.9 19.1 0 25.9l112 96.6c9.9 8.6 25 7.4 33.6-2.6s7.4-25-2.6-33.6z"/>
+    <path d="M363.4 268.4l88.5-76.4-88.5-76.4c-9.9-8.6-11.1-23.7-2.6-33.6s23.7-11.1 33.6-2.6l112 96.6c7.9 6.8 7.9 19.1 0 25.9l-112 96.6c-9.9 8.6-25 7.4-33.6-2.6s-7.4-25 2.6-33.6z"/>
+    <path d="M285.4 49.3l-128 352c-4.4 12.1 1.7 25.6 13.8 30s25.6-1.7 30-13.8l128-352c4.4-12.1-1.7-25.6-13.8-30s-25.6 1.7-30 13.8z"/>
+  </g>
+</svg>
