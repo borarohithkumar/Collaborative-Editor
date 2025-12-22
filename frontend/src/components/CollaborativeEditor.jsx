@@ -25,6 +25,7 @@ import {
   Palette,
   Highlighter,
   Send,
+  Loader2,
 } from "lucide-react";
 import { io } from "socket.io-client";
 import { motion, AnimatePresence } from "framer-motion";
@@ -1774,9 +1775,10 @@ export default function CollaborativeEditor() {
 
             {/* If docId exists (from URL), show "Joining..." */}
             {docId ? (
-              <p className="mt-4 text-gray-500 dark:text-gray-400">
-                Joining document...
-              </p>
+              <div className="mt-4 flex flex-col items-center gap-2 text-gray-500 dark:text-gray-400">
+                <Loader2 className="animate-spin text-indigo-500" size={24} />
+                  <p>Joining document...</p>
+              </div>
             ) : (
               // If no docId, show the join/create form
               <div className="mt-4 text-left">
