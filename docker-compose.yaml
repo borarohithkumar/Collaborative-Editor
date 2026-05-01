@@ -1,0 +1,19 @@
+services:
+  collab_editor_frontend:
+    build:
+      context: ./frontend
+      args:
+        - VITE_SOCKET_SERVER_URL=https://rbkreator.me
+    ports:
+      - "3000:80"
+    depends_on:
+      - collab_editor_backend
+
+  collab_editor_backend:
+    build: ./backend
+    env_file: ./backend/.env
+    ports:
+      - "5000:5000"
+    environment:
+      MODE: prod
+
