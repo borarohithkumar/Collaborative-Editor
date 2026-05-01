@@ -1,0 +1,20 @@
+on:
+  push:
+    branches:
+      - main
+jobs:
+  deploy_collab-editor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: execute ssh cmds to get into aws
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{secrets.AWS_HOST}}
+          username: ${{secrets.AWS_USERNAME}}
+          key: ${{secrets.AWS_PRIVATE_KEY}}
+          script: |
+            cd ~/MERN_Server/collaborative-editor
+            git pull origin main
+            docker compose up -d
+            docker image prune -f
+            docker container prune -f
